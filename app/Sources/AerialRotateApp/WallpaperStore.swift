@@ -35,6 +35,34 @@ enum WallpaperStore {
         return nil
     }
 
+    /// True when the wallpaper is set to a rotating/shuffle aerial source, which is
+    /// what makes macOS prefetch the whole catalog. Two independent tells in the
+    /// store, either is sufficient:
+    ///   - `...Content.Shuffle` is a dict (`Type`/`Duration`) vs the string "$null".
+    ///   - the choice's `assetID` is a "shuffle-*-aerials" sentinel, not a real UUID.
+    /// Defaults to false (don't warn) when the store can't be read.
+    static func isRotating() -> Bool {
+        guard let data = FileManager.default.contents(atPath: Config.wallpaperStore),
+              let root = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
+        else { return false }
+
+        let contentPaths: [[String]] = [
+            ["AllSpacesAndDisplays", "Linked", "Content"],
+            ["SystemDefault", "Linked", "Content"],
+        ]
+        for path in contentPaths {
+            guard let content = value(at: path, in: root) as? [String: Any] else { continue }
+            if content["Shuffle"] is [String: Any] { return true }
+            if let choices = content["Choices"] as? [Any],
+               let first = choices.first as? [String: Any],
+               let blob = first["Configuration"] as? Data,
+               let inner = (try? PropertyListSerialization.propertyList(from: blob, format: nil)) as? [String: Any],
+               let assetID = inner["assetID"] as? String,
+               assetID.hasPrefix("shuffle-") { return true }
+        }
+        return false
+    }
+
     /// Absolute path to the current wallpaper .mov, if it can be resolved and exists on disk.
     static func currentMovURL() -> URL? {
         guard let id = currentAssetID() else { return nil }

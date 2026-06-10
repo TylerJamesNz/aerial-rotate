@@ -18,6 +18,7 @@ final class AppState: ObservableObject {
     @Published var progress: DownloadProgress?      // nil = idle
     @Published var snapshot: CacheSnapshot = .empty
     @Published var currentName: String = "—"
+    @Published var rotating: Bool = false           // wallpaper is on a shuffle/rotate aerial source
     @Published var rotationHour: Int = 12
     @Published var rotationMinute: Int = 0
     @Published var lastEvent: String = ""           // most recent NOTIFY summary, for the menu
@@ -37,8 +38,10 @@ final class AppState: ObservableObject {
             let currentID = WallpaperStore.currentAssetID()
             let snap = CacheModel.snapshot(currentID: currentID)
             let time = CacheModel.rotationTime()
+            let rotating = WallpaperStore.isRotating()
             await MainActor.run {
                 self.snapshot = snap
+                self.rotating = rotating
                 if let id = currentID,
                    let item = snap.items.first(where: { $0.id == id }) {
                     self.currentName = item.name

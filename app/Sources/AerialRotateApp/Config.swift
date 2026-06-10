@@ -13,8 +13,17 @@ enum Config {
     static var videoDir: String { assetRoot + "/4KSDR240FPS" }
     static var entriesJSON: String { assetRoot + "/entries.json" }
 
+    /// Local preview JPEGs idleassetsd caches per asset, keyed by the same id as
+    /// the .mov (sibling of Customer/). World-readable, ~50 KB, present for the
+    /// whole catalog, so a thumbnail needs no network.
+    static let snapshotsDir = "/Library/Application Support/com.apple.idleassetsd/snapshots"
+    static func previewImagePath(for id: String) -> String {
+        snapshotsDir + "/asset-preview-\(id).jpg"
+    }
+
     static let daemonPlist = "/Library/LaunchDaemons/com.tyler.aerial-rotate.plist"
     static let daemonLabel = "com.tyler.aerial-rotate"
+    static let daemonScript = "/usr/local/bin/aerial-rotate.sh"
 
     /// User-owned wallpaper store holding the currently pinned asset id.
     static var wallpaperStore: String {
