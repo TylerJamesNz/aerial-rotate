@@ -32,7 +32,7 @@ USER_HOME=$(/usr/bin/dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/
 USER_UID=$(/usr/bin/id -u "$TARGET_USER" 2>/dev/null)
 STORE="$USER_HOME/Library/Application Support/com.apple.wallpaper/Store/Index.plist"
 
-NOTIFIER="/opt/homebrew/bin/terminal-notifier"  # preferred banner sender; falls back to osascript
+DIALOG="/usr/local/bin/dialog"  # swiftDialog: registers on macOS 15 + bridges root->user session itself
 
 CFG_PATHS=(
   "AllSpacesAndDisplays.Linked.Content.Choices.0.Configuration"
@@ -46,22 +46,23 @@ SHUF_PATHS=(
 log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; }
 die() { log "ABORT: $*"; notify "Aerial rotate failed" "$*"; exit 1; }
 
-# native macOS banner, posted into the logged-in user's GUI session.
-# Prefers terminal-notifier (its own bundle id + notification permission means
-# banners actually show; osascript posts as "Script Editor" which is easily
-# suppressed or unauthorised). Falls back to osascript if terminal-notifier
-# isn't installed, so the script still works on a bare machine.
+# Ephemeral swiftDialog WINDOW posted into the logged-in user's GUI session.
+# Notification Center is unreachable from a root daemon: terminal-notifier and
+# osascript use the dead NSUserNotification API, and swiftDialog --notification
+# needs a per-user notification grant the daemon context can never obtain (Dialog
+# never registers, so it never appears in Notifications settings to be allowed,
+# confirmed swiftDialog issue #373, maintainer "not an issue"). A swiftDialog
+# --mini window needs zero notification permission: it just renders. The daemon
+# runs as root, so the window is placed in the user's GUI session via
+# launchctl asuser <uid> sudo -u <user>, and backgrounded so the auto-dismiss
+# timer never stalls the run. The NOTIFY: line is always logged first.
 notify() {
   local title="$1" msg="$2"
-  if [ -x "$NOTIFIER" ]; then
-    launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" \
-      "$NOTIFIER" -group aerial-rotate -title "🌄 Aerial" -subtitle "$title" -message "$msg" \
-      >/dev/null 2>&1 || true
-  else
-    launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" \
-      /usr/bin/osascript -e "display notification \"${msg//\"/}\" with title \"🌄 Aerial\" subtitle \"${title//\"/}\"" \
-      >/dev/null 2>&1 || true
-  fi
+  log "NOTIFY: $title - $msg"
+  [ -x "$DIALOG" ] || return 0
+  launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" \
+    "$DIALOG" --mini --title "🌄 Aerial" --message "$title: $msg" \
+    --position topright --timer 6 --ontop --hidetimerbar >/dev/null 2>&1 &
 }
 
 # emit "<id> <mtime-epoch>" per .mov in the video dir, sorted by id

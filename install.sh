@@ -2,7 +2,7 @@
 # Installer for the aerial-rotate job. Run once with sudo from the repo root:
 #   sudo ./install.sh
 #
-# Installs the script + LaunchDaemon, ensures terminal-notifier is present (for
+# Installs the script + LaunchDaemon, ensures swiftDialog is present (for
 # banner notifications), loads the daily timer, and runs one rotation now.
 set -euo pipefail
 
@@ -13,12 +13,23 @@ VIDEO_DIR="/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240F
 echo "== free space BEFORE =="
 df -h /System/Volumes/Data | tail -1
 
-echo "== ensuring terminal-notifier is installed (for banner notifications) =="
-if ! sudo -u "$TARGET_USER" command -v terminal-notifier >/dev/null 2>&1 \
-   && [ ! -x /opt/homebrew/bin/terminal-notifier ] && [ ! -x /usr/local/bin/terminal-notifier ]; then
-  echo "  installing via Homebrew as $TARGET_USER ..."
-  sudo -u "$TARGET_USER" brew install terminal-notifier || \
-    echo "  WARN: could not install terminal-notifier — script will fall back to osascript banners"
+echo "== ensuring swiftDialog is installed (for banner notifications) =="
+# swiftDialog is notarized/signed and requires macOS 15+. Unlike terminal-notifier
+# and osascript (both dead NSUserNotification API on macOS 15), it registers in
+# Notifications settings and its /usr/local/bin/dialog launcher bridges a root
+# daemon into the logged-in user's GUI session via launchctl asuser on its own.
+if [ ! -x /usr/local/bin/dialog ]; then
+  # The release assets are versioned (e.g. dialog-3.0.1-4955.pkg) with no stable
+  # "dialog.pkg" alias, so latest/download/dialog.pkg 404s. Resolve the real pkg
+  # asset URL from the GitHub releases API instead — survives version bumps.
+  echo "  resolving latest swiftDialog pkg ..."
+  DIALOG_PKG_URL=$(curl -fsSL https://api.github.com/repos/swiftDialog/swiftDialog/releases/latest \
+    | python3 -c "import sys,json; print(next(a['browser_download_url'] for a in json.load(sys.stdin)['assets'] if a['name'].endswith('.pkg')))")
+  [ -n "$DIALOG_PKG_URL" ] || { echo "  ERROR: could not resolve swiftDialog pkg URL" >&2; exit 1; }
+  echo "  installing $DIALOG_PKG_URL ..."
+  curl -fsSL -o /tmp/dialog.pkg "$DIALOG_PKG_URL"
+  installer -pkg /tmp/dialog.pkg -target /   # runs as root (install.sh is sudo)
+  rm -f /tmp/dialog.pkg
 else
   echo "  already installed"
 fi
