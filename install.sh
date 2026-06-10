@@ -8,7 +8,11 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_USER="${SUDO_USER:-$(stat -f%Su /dev/console)}"
+USER_UID=$(id -u "$TARGET_USER")
+USER_HOME=$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory | awk '{print $2}')
 VIDEO_DIR="/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS"
+SENTINEL="/usr/local/var/aerial-rotate/trigger"   # WatchPaths trigger shared by the user agent + the app
+AGENT_PLIST="$USER_HOME/Library/LaunchAgents/com.tyler.aerial-rotate-agent.plist"
 
 echo "== free space BEFORE =="
 df -h /System/Volumes/Data | tail -1
@@ -38,9 +42,23 @@ echo "== installing script + daemon =="
 install -m 755 "$REPO_DIR/aerial-rotate.sh" /usr/local/bin/aerial-rotate.sh
 install -m 644 -o root -g wheel "$REPO_DIR/com.tyler.aerial-rotate.plist" /Library/LaunchDaemons/com.tyler.aerial-rotate.plist
 
-echo "== loading daemon (daily at 12:00) =="
+echo "== creating the WatchPaths trigger dir (user-owned, no sudo to touch) =="
+# The daemon watches $SENTINEL; the user agent and the app touch it. The dir is
+# user-owned so neither needs root to fire a rotation.
+install -d -o "$TARGET_USER" -g staff /usr/local/var/aerial-rotate
+
+echo "== loading the root daemon (fires on a trigger touch via WatchPaths) =="
 launchctl bootout system /Library/LaunchDaemons/com.tyler.aerial-rotate.plist 2>/dev/null || true
 launchctl bootstrap system /Library/LaunchDaemons/com.tyler.aerial-rotate.plist
+
+echo "== installing + loading the user agent (owns the daily schedule) =="
+# The agent runs as the user at the scheduled time and only touches the trigger;
+# the daemon does the privileged rotation. Splitting timing (user-owned plist)
+# from privilege (root daemon) is what lets the app reschedule without a password.
+install -d -o "$TARGET_USER" -g staff "$USER_HOME/Library/LaunchAgents"
+install -m 644 -o "$TARGET_USER" -g staff "$REPO_DIR/com.tyler.aerial-rotate-agent.plist" "$AGENT_PLIST"
+launchctl asuser "$USER_UID" launchctl bootout "gui/$USER_UID" "$AGENT_PLIST" 2>/dev/null || true
+launchctl asuser "$USER_UID" launchctl bootstrap "gui/$USER_UID" "$AGENT_PLIST"
 
 echo "== building + installing the menu-bar app =="
 # The app is the interactive face over the daemon's log/state. It must run in
@@ -49,7 +67,6 @@ echo "== building + installing the menu-bar app =="
 # notification grant, swiftDialog issue #373). Build AS THE USER so .build/ and
 # the ad-hoc signature aren't root-owned; a build failure warns but does not
 # abort the daemon install.
-USER_UID=$(id -u "$TARGET_USER")
 if sudo -u "$TARGET_USER" /bin/bash "$REPO_DIR/app/build.sh"; then
   rm -rf /Applications/AerialRotate.app
   cp -R "$REPO_DIR/app/AerialRotate.app" /Applications/
@@ -64,8 +81,15 @@ else
   echo "  WARN: app build failed — daemon is installed, but the menu-bar app was not. See output above."
 fi
 
-echo "== running one rotation now (watch for the banners) =="
-/bin/bash /usr/local/bin/aerial-rotate.sh
+echo "== kicking one rotation now via the trigger (the real WatchPaths path) =="
+# Touch as the user (fresh mtime) so the daemon fires through WatchPaths exactly
+# as it will in normal use. This also exercises the load-fire guard's happy path.
+sudo -u "$TARGET_USER" /usr/bin/touch "$SENTINEL"
+echo "  waiting for the daemon to finish (up to 5 min); watch for the banners ..."
+for _ in $(seq 1 150); do
+  tail -n 1 /var/log/aerial-rotate.log 2>/dev/null | grep -qiE "applied|ABORT|failed" && break
+  sleep 2
+done
 
 echo "== aerial videos now on disk =="
 ls -lh "$VIDEO_DIR"/*.mov 2>/dev/null

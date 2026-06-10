@@ -35,6 +35,9 @@ USER_HOME=$(/usr/bin/dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/
 USER_UID=$(/usr/bin/id -u "$TARGET_USER" 2>/dev/null)
 STORE="$USER_HOME/Library/Application Support/com.apple.wallpaper/Store/Index.plist"
 
+SENTINEL="/usr/local/var/aerial-rotate/trigger"  # WatchPaths trigger: a fresh touch (user agent at the scheduled time, or the app's Refresh button) fires this daemon
+SENTINEL_MAX_AGE=120                              # seconds; older = a launchd load-fire (boot/reload), not a real trigger -> skip
+
 DIALOG="/usr/local/bin/dialog"  # swiftDialog: registers on macOS 15 + bridges root->user session itself
 
 CFG_PATHS=(
@@ -83,6 +86,24 @@ snapshot_dir() {
 # removal didn't deliver. Both helpers are idempotent and never fatal.
 lock_cache()   { chflags uchg   "$VIDEO_DIR" 2>/dev/null && log "locked cache dir (uchg)"     || log "WARN: could not lock $VIDEO_DIR"; }
 unlock_cache() { chflags nouchg "$VIDEO_DIR" 2>/dev/null && log "unlocked cache dir (nouchg)" || log "WARN: could not unlock $VIDEO_DIR"; }
+
+# ---- WatchPaths load-fire guard ---------------------------------------------
+# launchd starts a WatchPaths job once at load (boot / install / daemon reload),
+# not only when the path later changes. A real trigger always bumps the sentinel
+# mtime to ~now; a load-fire sees yesterday's mtime (or no file at all). Skip
+# unless the sentinel was freshly touched, so a reboot never rotates on its own.
+# This also debounces an accidental double-click of the app's Refresh button.
+# The script NEVER writes the sentinel, so this watch can't feed back on itself.
+if [ ! -f "$SENTINEL" ]; then
+  log "no trigger at $SENTINEL (load-fire before first touch); skipping."
+  exit 0
+fi
+sentinel_age=$(( $(date +%s) - $(stat -f '%m' "$SENTINEL" 2>/dev/null || echo 0) ))
+if [ "$sentinel_age" -gt "$SENTINEL_MAX_AGE" ]; then
+  log "stale trigger (age ${sentinel_age}s > ${SENTINEL_MAX_AGE}s); spurious load-fire, skipping."
+  exit 0
+fi
+log "fresh trigger (age ${sentinel_age}s); proceeding with rotation."
 
 # ---- preflight --------------------------------------------------------------
 [ "$(id -u)" -eq 0 ]      || die "must run as root (video dir is root-owned)"

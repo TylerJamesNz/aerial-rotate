@@ -1,63 +1,84 @@
 import Foundation
 
-/// Reschedules the daemon's daily run time. This is the ONE privileged action:
-/// it rewrites the root-owned LaunchDaemon plist and reloads it, so it goes
-/// through an AppleScript `with administrator privileges` (native auth prompt,
-/// Touch ID / password). A privileged helper (SMAppService) is not viable for a
-/// self-signed CLT-only build, so one auth prompt per change is the trade-off.
+/// Fires and reschedules the rotation, both WITHOUT a password. The privileged
+/// work stays in the root daemon; the app only touches user-owned files:
+///
+/// - "Refresh now" bumps the mtime of the WatchPaths trigger (`Config.sentinel`).
+///   The root daemon watches that path and runs the rotation as root, so no
+///   admin prompt. Fire-and-forget: the run is async and `LogTailer` drives the
+///   progress bar from the daemon's log.
+/// - Reschedule rewrites the USER LaunchAgent plist (`Config.userAgentPlist`)
+///   and reloads it in the user's GUI domain. The agent is user-owned, so this
+///   needs no root either. The agent touches the trigger at the chosen time.
+///
+/// This replaces the old `NSAppleScript … with administrator privileges` path,
+/// which prompted for a password on every click.
 enum DaemonScheduler {
 
     enum Result {
         case success
-        case canceled            // operator dismissed the auth dialog
         case failure(String)
     }
 
-    /// Rewrite StartCalendarInterval {Hour, Minute} and reload the daemon.
+    /// Fire a rotation now by bumping the trigger's mtime. The dir is user-owned
+    /// (created by install.sh), so no root is needed. Creates the file on first
+    /// use. Returns immediately; the daemon runs async and `LogTailer` reports
+    /// progress.
+    static func runNow() -> Result {
+        let path = Config.sentinel
+        let fm = FileManager.default
+        do {
+            if fm.fileExists(atPath: path) {
+                try fm.setAttributes([.modificationDate: Date()], ofItemAtPath: path)
+            } else if !fm.createFile(atPath: path, contents: Data()) {
+                return .failure("Could not create the trigger at \(path). Is the app installed?")
+            }
+            return .success
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    /// Rewrite the user agent's StartCalendarInterval {Hour, Minute} and reload
+    /// it in the GUI domain. All user-owned, so no password. Validated integer
+    /// literals only; no user free-text reaches the shell.
     static func reschedule(hour: Int, minute: Int) -> Result {
         guard (0...23).contains(hour), (0...59).contains(minute) else {
             return .failure("Time out of range (\(hour):\(minute)).")
         }
-
-        // Validated integer literals only; no user free-text reaches the shell.
-        let plist = Config.daemonPlist
+        let plist = Config.userAgentPlist
+        let uid = getuid()
         let shell = """
         /usr/bin/plutil -replace StartCalendarInterval.Hour -integer \(hour) '\(plist)' && \
         /usr/bin/plutil -replace StartCalendarInterval.Minute -integer \(minute) '\(plist)' && \
-        /bin/launchctl bootout system '\(plist)' 2>/dev/null; \
-        /bin/launchctl bootstrap system '\(plist)'
+        /bin/launchctl bootout gui/\(uid) '\(plist)' 2>/dev/null; \
+        /bin/launchctl bootstrap gui/\(uid) '\(plist)'
         """
-        return executePrivileged(shell)
+        let (code, output) = runShell(shell)
+        // bootstrap exits non-zero only on a real load failure (bootout's
+        // "not loaded" case is swallowed above), so the exit code is the verdict.
+        return code == 0 ? .success
+                         : .failure(output.isEmpty ? "launchctl exited \(code)." : output)
     }
 
-    /// Run the rotation immediately, exactly as the daily LaunchDaemon does: the
-    /// daemon's ProgramArguments are `/bin/bash <script>`, so we invoke the same
-    /// script as root through the shared admin-auth prompt. Backs the "Refresh
-    /// now" button for on-demand swaps and smoke testing. Blocks until the run
-    /// finishes (~minutes) so the caller gets a real result; the log tailer
-    /// drives the live progress bar meanwhile. Not via `launchctl kickstart`
-    /// because the daemon isn't always bootstrapped.
-    static func runNow() -> Result {
-        executePrivileged("/bin/bash '\(Config.daemonScript)'")
-    }
-
-    /// Run a shell command as root via a native auth prompt (Touch ID / password).
-    private static func executePrivileged(_ shell: String) -> Result {
-        let escaped = shell
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let source = "do shell script \"\(escaped)\" with administrator privileges"
-
-        var errorInfo: NSDictionary?
-        let script = NSAppleScript(source: source)
-        script?.executeAndReturnError(&errorInfo)
-
-        if let err = errorInfo {
-            let code = (err[NSAppleScript.errorNumber] as? Int) ?? 0
-            if code == -128 { return .canceled }   // user canceled auth
-            let msg = (err[NSAppleScript.errorMessage] as? String) ?? "Unknown error (\(code))."
-            return .failure(msg)
+    /// Run a shell line as the current (non-root) user, returning (exit code,
+    /// combined stdout+stderr).
+    private static func runShell(_ shell: String) -> (Int32, String) {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/sh")
+        proc.arguments = ["-c", shell]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do {
+            try proc.run()
+        } catch {
+            return (-1, error.localizedDescription)
         }
-        return .success
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        let out = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return (proc.terminationStatus, out)
     }
 }

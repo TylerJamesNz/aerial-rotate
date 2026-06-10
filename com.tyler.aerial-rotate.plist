@@ -9,13 +9,10 @@
         <string>/bin/bash</string>
         <string>/usr/local/bin/aerial-rotate.sh</string>
     </array>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>12</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <key>WatchPaths</key>
+    <array>
+        <string>/usr/local/var/aerial-rotate/trigger</string>
+    </array>
     <key>RunAtLoad</key>
     <false/>
     <key>StandardOutPath</key>
