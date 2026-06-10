@@ -1,0 +1,4 @@
+.build/
+AerialRotate.app/
+*.xcodeproj
+.DS_Store
