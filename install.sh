@@ -87,7 +87,9 @@ echo "== kicking one rotation now via the trigger (the real WatchPaths path) =="
 sudo -u "$TARGET_USER" /usr/bin/touch "$SENTINEL"
 echo "  waiting for the daemon to finish (up to 5 min); watch for the banners ..."
 for _ in $(seq 1 150); do
-  tail -n 1 /var/log/aerial-rotate.log 2>/dev/null | grep -qiE "applied|ABORT|failed" && break
+  # Grep the recent tail, not just the last line: the run ends with an EXIT-trap
+  # "locked cache dir" line AFTER the "applied" NOTIFY, so tail -n 1 would miss it.
+  tail -n 12 /var/log/aerial-rotate.log 2>/dev/null | grep -qiE "applied|ABORT|failed" && break
   sleep 2
 done
 
