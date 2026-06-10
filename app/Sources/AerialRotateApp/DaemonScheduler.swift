@@ -27,8 +27,22 @@ enum DaemonScheduler {
         /bin/launchctl bootout system '\(plist)' 2>/dev/null; \
         /bin/launchctl bootstrap system '\(plist)'
         """
+        return executePrivileged(shell)
+    }
 
-        // Embed the shell command inside an AppleScript string literal.
+    /// Run the rotation immediately, exactly as the daily LaunchDaemon does: the
+    /// daemon's ProgramArguments are `/bin/bash <script>`, so we invoke the same
+    /// script as root through the shared admin-auth prompt. Backs the "Refresh
+    /// now" button for on-demand swaps and smoke testing. Blocks until the run
+    /// finishes (~minutes) so the caller gets a real result; the log tailer
+    /// drives the live progress bar meanwhile. Not via `launchctl kickstart`
+    /// because the daemon isn't always bootstrapped.
+    static func runNow() -> Result {
+        executePrivileged("/bin/bash '\(Config.daemonScript)'")
+    }
+
+    /// Run a shell command as root via a native auth prompt (Touch ID / password).
+    private static func executePrivileged(_ shell: String) -> Result {
         let escaped = shell
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
