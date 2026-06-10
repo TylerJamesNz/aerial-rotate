@@ -46,23 +46,21 @@ SHUF_PATHS=(
 log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; }
 die() { log "ABORT: $*"; notify "Aerial rotate failed" "$*"; exit 1; }
 
-# Ephemeral swiftDialog WINDOW posted into the logged-in user's GUI session.
-# Notification Center is unreachable from a root daemon: terminal-notifier and
-# osascript use the dead NSUserNotification API, and swiftDialog --notification
-# needs a per-user notification grant the daemon context can never obtain (Dialog
-# never registers, so it never appears in Notifications settings to be allowed,
-# confirmed swiftDialog issue #373, maintainer "not an issue"). A swiftDialog
-# --mini window needs zero notification permission: it just renders. The daemon
-# runs as root, so the window is placed in the user's GUI session via
-# launchctl asuser <uid> sudo -u <user>, and backgrounded so the auto-dismiss
-# timer never stalls the run. The NOTIFY: line is always logged first.
+# Record a notification event. The daemon only LOGS it now; the menu-bar app
+# (app/) owns the user-facing surface, watching this log and posting Notification
+# Center banners + a smooth in-window progress bar from the user GUI session
+# (the one context where UNUserNotificationCenter works, which a root daemon
+# can't reach, swiftDialog issue #373). The earlier swiftDialog --mini window is
+# retired: it spawned a fresh auto-dismissing window per milestone, which
+# flickered. Keep the NOTIFY: log line exactly as-is, it is the app's data feed.
 notify() {
   local title="$1" msg="$2"
   log "NOTIFY: $title - $msg"
-  [ -x "$DIALOG" ] || return 0
-  launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" \
-    "$DIALOG" --mini --title "🌄 Aerial" --message "$title: $msg" \
-    --position topright --timer 6 --ontop --hidetimerbar >/dev/null 2>&1 &
+  # swiftDialog window retired: the menu-bar app (app/) now owns notifications.
+  # It posts Notification Center banners from the user GUI session and shows a
+  # smooth in-window progress bar. The NOTIFY: log line above is the app's data
+  # channel (LogTailer parses it), so it stays. This kills the per-milestone
+  # window flicker (each swiftDialog call was a new auto-dismissing window).
 }
 
 # emit "<id> <mtime-epoch>" per .mov in the video dir, sorted by id
