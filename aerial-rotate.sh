@@ -5,16 +5,21 @@
 # to run manually with sudo.
 #
 # Each run:
-#   1. snapshots the video dir and reports which .mov's APPEARED since the last run
-#      (diagnostic: shows whether macOS prefetched aerials on its own)
-#   2. picks a random aerial from the catalog (excludes the current one)
-#   3. downloads just that one .mov, posting % banners as it goes, verifies its size
-#   4. pins the wallpaper to it (edits the user's Index.plist), removes the Shuffle
-#      dict so the OS stops cycling/prefetching, then reloads WallpaperAgent
-#   5. prunes every other .mov — but only every PRUNE_EVERY runs, so accumulation
-#      between prunes stays observable while we confirm the Shuffle-kill worked
+#   1. unlocks the video dir (chflags nouchg) — it sits user-immutable between
+#      runs so the prefetcher (idleassetsd, runs as _assetsd) can't add aerials
+#   2. snapshots the dir and reports which .mov's APPEARED since last run
+#      (diagnostic: proves whether the lock held)
+#   3. picks a random aerial from the catalog (excludes the current one)
+#   4. downloads just that one .mov, posting % banners as it goes, verifies size
+#   5. pins the wallpaper to it (edits Index.plist), removes the Shuffle dict,
+#      then reloads WallpaperAgent
+#   6. cleans every other .mov (anything the OS snuck in while unlocked), then
+#      relocks the dir (chflags uchg) so it stays a single-file cache
 #
-# Aborts WITHOUT deleting the old video if the download or verify fails.
+# Removing the Shuffle dict alone did NOT stop the prefetcher (it kept pulling
+# aerials with the dict gone); the chflags lock is the real enforcement. Aborts
+# WITHOUT deleting the old video on download/verify failure, and an EXIT trap
+# relocks the dir on every exit path so a failed run never leaves it writable.
 
 set -uo pipefail
 
@@ -25,8 +30,6 @@ ENTRIES="$ASSET_ROOT/entries.json"
 VIDEO_DIR="$ASSET_ROOT/4KSDR240FPS"
 LOG="/var/log/aerial-rotate.log"
 STATE="/var/log/aerial-rotate.state"           # end-of-run snapshot of the video dir
-COUNTER="/var/log/aerial-rotate.prune-counter" # runs since last prune
-PRUNE_EVERY=2                                  # prune the dir down to one video every Nth run
 
 USER_HOME=$(/usr/bin/dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
 USER_UID=$(/usr/bin/id -u "$TARGET_USER" 2>/dev/null)
@@ -74,6 +77,13 @@ snapshot_dir() {
   done < <(find "$VIDEO_DIR" -maxdepth 1 -name '*.mov') | sort
 }
 
+# ---- cache lock (chflags) ---------------------------------------------------
+# idleassetsd runs as _assetsd, not root, so a root-set user-immutable flag on
+# the video dir blocks it from adding new .mov's — the durable fix the Shuffle
+# removal didn't deliver. Both helpers are idempotent and never fatal.
+lock_cache()   { chflags uchg   "$VIDEO_DIR" 2>/dev/null && log "locked cache dir (uchg)"     || log "WARN: could not lock $VIDEO_DIR"; }
+unlock_cache() { chflags nouchg "$VIDEO_DIR" 2>/dev/null && log "unlocked cache dir (nouchg)" || log "WARN: could not unlock $VIDEO_DIR"; }
+
 # ---- preflight --------------------------------------------------------------
 [ "$(id -u)" -eq 0 ]      || die "must run as root (video dir is root-owned)"
 [ -f "$ENTRIES" ]         || die "catalog not found: $ENTRIES"
@@ -87,6 +97,11 @@ CURRENT_ID=$(plutil -extract "${CFG_PATHS[0]}" raw "$STORE" 2>/dev/null \
   | base64 --decode 2>/dev/null \
   | plutil -extract assetID raw - 2>/dev/null)
 log "current assetID: ${CURRENT_ID:-<none>}"
+
+# ---- unlock for the run; relock on ANY exit --------------------------------
+trap lock_cache EXIT
+unlock_cache
+notify "Rotating aerial" "unlocked cache, selecting a new aerial"
 
 # ---- diagnostic: what appeared since last run -------------------------------
 CURRENT_SNAP=$(snapshot_dir)
@@ -200,25 +215,24 @@ fi
 launchctl asuser "$USER_UID" killall WallpaperAgent 2>/dev/null || true
 log "pinned wallpaper to $NEW_NAME"
 
-# ---- prune every Nth run (so accumulation between prunes is observable) ------
-n=0; [ -f "$COUNTER" ] && n=$(cat "$COUNTER" 2>/dev/null || echo 0)
-n=$((n + 1))
-if [ "$n" -ge "$PRUNE_EVERY" ]; then
-  freed=0
-  while IFS= read -r f; do
-    [ "$f" = "$DEST" ] && continue
-    sz=$(stat -f%z "$f" 2>/dev/null || echo 0)
-    rm -f "$f" && freed=$((freed + sz))
-  done < <(find "$VIDEO_DIR" -maxdepth 1 -name '*.mov')
-  freed_mb=$((freed / 1024 / 1024))
-  log "pruned others (run $n/$PRUNE_EVERY), freed ${freed_mb} MB — one aerial on disk: $NEW_NAME"
-  notify "✅ New wallpaper applied" "$NEW_NAME — freed ${freed_mb} MB"
-  echo 0 > "$COUNTER"
+# ---- clean anything the OS snuck in, then relock ---------------------------
+# The dir was writable this run, so idleassetsd may have slipped extra aerials
+# in. Delete every .mov except the one we just pinned; the EXIT trap relocks.
+snuck=0; freed=0
+while IFS= read -r f; do
+  [ "$f" = "$DEST" ] && continue
+  sz=$(stat -f%z "$f" 2>/dev/null || echo 0)
+  rm -f "$f" && { snuck=$((snuck + 1)); freed=$((freed + sz)); }
+done < <(find "$VIDEO_DIR" -maxdepth 1 -name '*.mov')
+freed_mb=$((freed / 1024 / 1024))
+if [ "$snuck" -gt 0 ]; then
+  log "cleanup: removed $snuck stray .mov(s) the OS added, freed ${freed_mb} MB"
 else
-  log "skip prune this run ($n/$PRUNE_EVERY) — leaving extra videos on disk to observe accumulation"
-  notify "✅ New wallpaper applied" "$NEW_NAME — prune skipped ($n/$PRUNE_EVERY)"
-  echo "$n" > "$COUNTER"
+  log "cleanup: no strays — only the pinned aerial on disk"
 fi
+
+lock_cache
+notify "✅ New wallpaper applied" "$NEW_NAME — cleaned ${snuck} stray, freed ${freed_mb} MB, cache locked"
 
 # ---- write end-of-run snapshot for next run's diagnostic --------------------
 snapshot_dir > "$STATE"
