@@ -131,19 +131,23 @@ private struct NextRotationView: View {
 
 // MARK: - 5. Manual "rotate now" (smoke test / on-demand swap)
 
-/// Runs the daily rotation on demand, same script the LaunchDaemon runs. Asks
-/// for an admin password (root is needed to write the OS-owned asset dir), then
-/// the existing log-tailer progress bar shows the download live. Disabled while
-/// any rotation is already in flight so we never double-run.
+/// Runs the daily rotation on demand by bumping the WatchPaths trigger (no
+/// password: the root daemon does the privileged work). Fire-and-forget, the
+/// existing log-tailer progress bar shows the download live. `triggered` covers
+/// the brief gap between the touch and the daemon's first log line; once
+/// `state.progress` appears, that drives the spinner until the run finishes.
+/// Disabled while any rotation is already in flight so we never double-fire.
 private struct RotateNowButton: View {
     @EnvironmentObject private var state: AppState
-    @State private var running = false
+    @State private var triggered = false
     @State private var error: String?
+
+    private var busy: Bool { triggered || state.progress != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button(action: run) {
-                if running {
+                if busy {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
                         Text("Rotating…")
@@ -153,9 +157,9 @@ private struct RotateNowButton: View {
                 }
             }
             .buttonStyle(.bordered)
-            .disabled(running || state.progress != nil)
+            .disabled(busy)
 
-            Text("Runs the daily rotation now. Asks for your password.")
+            Text("Fetches a fresh wallpaper now. No password needed.")
                 .font(.caption).foregroundStyle(.secondary)
             if let error {
                 Text(error).font(.caption).foregroundStyle(.red)
@@ -164,15 +168,26 @@ private struct RotateNowButton: View {
     }
 
     private func run() {
-        running = true
+        triggered = true
         error = nil
         Task {
             let result = await Task.detached(priority: .userInitiated) {
                 DaemonScheduler.runNow()
             }.value
-            if case .failure(let msg) = result { error = msg }
+            if case .failure(let msg) = result {
+                error = msg
+                triggered = false
+                return
+            }
+            // The touch returns instantly; wait (up to ~20s) for the daemon to
+            // start emitting progress, then hand the spinner over to it. Clears
+            // on timeout too, so a no-op run (e.g. stale-trigger skip) recovers.
+            for _ in 0..<40 {
+                if state.progress != nil { break }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            triggered = false
             state.refresh()
-            running = false
         }
     }
 }

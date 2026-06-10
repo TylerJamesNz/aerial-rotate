@@ -14,8 +14,8 @@ Notification Center banners, clicking one opens the window.
 A menu-bar icon is always there. Click it for a quick status and an Open button;
 open the window for the full surface. When a rotation runs, a banner appears and
 the window's progress bar tracks the download. The "Reveal in Finder" button
-jumps to the current `.mov`. Setting a new rotation time pops a single macOS
-admin-auth prompt (the one privileged action), then the countdown updates.
+jumps to the current `.mov`. "Refresh wallpaper now" and setting a new rotation
+time both act instantly with no password prompt, then the window updates.
 
 ## How it works
 
@@ -23,19 +23,23 @@ admin-auth prompt (the one privileged action), then the countdown updates.
   same world-readable files the daemon writes: `/var/log/aerial-rotate.log`
   (progress + events), `/var/log/aerial-rotate.state` (the OS-prefetch diff),
   the asset dir under `com.apple.idleassetsd` (sizes + catalog), `entries.json`
-  (human names), the user wallpaper `Index.plist` (current id), and the daemon
-  LaunchDaemon plist (the schedule). No Full Disk Access, no root for reads.
+  (human names), the user wallpaper `Index.plist` (current id), and the user
+  LaunchAgent plist (the schedule). No Full Disk Access, no root for reads.
 - **Daemon -> app channel is the log.** `LogTailer` watches the log with a
   `DispatchSource` vnode source, parses `NOTIFY:` lines into the progress model,
   and posts banners. The app posting banners is the whole point: it runs in the
   user GUI session where `UNUserNotificationCenter` works, which the root daemon
   can't do (swiftDialog issue #373). This retires the daemon's swiftDialog
   `--mini` window once the app is proven (a later one-line daemon edit).
-- **The one write** is rescheduling: `DaemonScheduler` rewrites the daemon
-  plist's `StartCalendarInterval` and reloads it via an AppleScript
-  `with administrator privileges` prompt. A privileged helper (SMAppService) is
-  not viable self-signed under CLT-only, so one auth prompt per change is the
-  trade-off.
+- **The two writes are both password-free** because they touch only user-owned
+  files (`DaemonScheduler`). "Refresh now" bumps the mtime of the WatchPaths
+  trigger (`/usr/local/var/aerial-rotate/trigger`); the root daemon watches it
+  and does the privileged rotation. Reschedule rewrites the *user* LaunchAgent
+  plist's `StartCalendarInterval` and reloads it in the GUI domain
+  (`launchctl … gui/$UID`); the agent touches the trigger at the chosen time.
+  Splitting timing (user agent) from privilege (root daemon) is what removed the
+  old `with administrator privileges` prompt; a privileged helper (SMAppService)
+  was never viable self-signed under CLT-only.
 - **Build is SwiftPM + hand-assembled bundle.** No Xcode is installed (CLT
   only), so `build.sh` runs `swift build`, assembles `AerialRotate.app` around
   the binary with a hand-written `Info.plist`, and ad-hoc codesigns it
@@ -46,6 +50,7 @@ admin-auth prompt (the one privileged action), then the countdown updates.
 ## See also
 
 - `../aerial-rotate.sh` — the daemon; source of the log/state the app reads.
-- `../com.tyler.aerial-rotate.plist` — the schedule the app reads and rewrites.
+- `../com.tyler.aerial-rotate.plist` — root daemon, WatchPaths trigger -> rotate.
+- `../com.tyler.aerial-rotate-agent.plist` — user agent; the schedule the app reads and rewrites.
 - `../install.sh` — builds the app as the user and installs it as a login item.
 - `build.sh` — `swift build` + bundle assembly + ad-hoc codesign.

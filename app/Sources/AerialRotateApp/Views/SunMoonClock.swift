@@ -57,8 +57,9 @@ struct SunMoonClock: View {
         let h = c.hour ?? 0, m = c.minute ?? 0
         busy = true
         status = ""
-        // NSAppleScript admin auth is synchronous/modal; run on the next runloop
-        // tick so the button shows "Setting…" first.
+        // launchctl reload can take a moment; run off the next runloop tick so
+        // the button shows "Setting…" first. No password: the agent plist is
+        // user-owned, so this is an unprivileged rewrite + GUI-domain reload.
         DispatchQueue.main.async {
             let result = DaemonScheduler.reschedule(hour: h, minute: m)
             busy = false
@@ -66,8 +67,6 @@ struct SunMoonClock: View {
             case .success:
                 status = String(format: "Rescheduled to %02d:%02d daily.", h, m)
                 state.refresh()
-            case .canceled:
-                status = "Cancelled, schedule unchanged."
             case .failure(let msg):
                 status = "Failed: \(msg)"
             }

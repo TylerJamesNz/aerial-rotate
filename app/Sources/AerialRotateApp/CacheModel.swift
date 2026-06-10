@@ -67,9 +67,11 @@ enum CacheModel {
         return CacheSnapshot(totalBytes: total, currentID: currentID, currentBytes: currentBytes, items: items)
     }
 
-    /// `(hour, minute)` the daemon is scheduled to run, read from its LaunchDaemon plist.
+    /// `(hour, minute)` the rotation is scheduled for, read from the user
+    /// LaunchAgent plist (the agent owns the schedule and touches the trigger;
+    /// the root daemon just watches the trigger, so it no longer holds the time).
     static func rotationTime() -> (hour: Int, minute: Int)? {
-        guard let data = FileManager.default.contents(atPath: Config.daemonPlist),
+        guard let data = FileManager.default.contents(atPath: Config.userAgentPlist),
               let root = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
               let interval = root["StartCalendarInterval"] as? [String: Any]
         else { return nil }

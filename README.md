@@ -16,7 +16,7 @@ Each 4K aerial is 350-750 MB. If you leave the wallpaper on "Shuffle all aerials
 
 ## The solution
 
-A `bash` script run by a root **LaunchDaemon** once a day. Each run:
+A `bash` script that does the privileged rotation, fired once a day. Each run:
 
 1. **Snapshots the video dir** and logs which `.mov`s appeared since the last run (diagnostic: shows whether macOS prefetched any aerials on its own).
 2. **Picks a random aerial** from the catalog (`entries.json`, ~98 eligible after filtering), excluding the current one.
@@ -26,6 +26,26 @@ A `bash` script run by a root **LaunchDaemon** once a day. Each run:
 6. **Prunes every other `.mov`** so you are left with one aerial on disk. Pruning happens **last**, only after the new video is downloaded, verified, and applied, so you are never left with zero. (During the confirmation phase this is gated to every other run via a small counter, so accumulation stays observable.)
 
 If the download or verify fails, the script **aborts without deleting** the existing video.
+
+### How a run is triggered (two launchd jobs, no password)
+
+The rotation needs root (the asset dir is root-owned), but the app must trigger it without prompting for a password every time. Timing is split from privilege across two launchd jobs and one shared trigger file:
+
+```
+User LaunchAgent (com.tyler.aerial-rotate-agent)   # user-owned, holds the daily schedule
+    | /usr/bin/touch /usr/local/var/aerial-rotate/trigger   (no sudo)
+    v
+Root LaunchDaemon (com.tyler.aerial-rotate)        # WatchPaths on the trigger -> runs the script as root
+    ^
+    | touch trigger (app "Refresh now") / rewrite agent plist (app reschedule)
+   AerialRotate.app                                 # user GUI session, no password
+```
+
+- The **root daemon** no longer carries a schedule. It has a `WatchPaths` on `/usr/local/var/aerial-rotate/trigger`; any change to that file's mtime starts the privileged rotation.
+- The **user agent** owns the daily time (`StartCalendarInterval`). When it fires it does one thing: `touch` the trigger. Because the agent plist is user-owned, the app reschedules by rewriting it, no password.
+- The **app's "Refresh now"** just touches the trigger directly. The trigger dir is user-owned (created by `install.sh`), so neither path needs root.
+
+`WatchPaths` starts a job once at *load* too (boot, install, daemon reload), not only on later changes. So the script skips unless the trigger was freshly touched (mtime within 120s); a stale mtime means a load-fire and the run is a no-op. This also debounces a double-click of Refresh. The script never writes the trigger, so the watch can't feed back on itself.
 
 ### The Shuffle bug (the core fix)
 
@@ -56,10 +76,11 @@ So the notification path uses [**swiftDialog**](https://github.com/swiftDialog/s
 ## Layout
 
 ```
-aerial-rotate.sh                 # the rotation script (installed to /usr/local/bin/)
-com.tyler.aerial-rotate.plist    # LaunchDaemon, runs daily at 12:00 (installed to /Library/LaunchDaemons/)
-install.sh                       # one-shot installer (sudo)
-app/                             # SwiftUI menu-bar status app (see app/README.md)
+aerial-rotate.sh                     # the rotation script (installed to /usr/local/bin/)
+com.tyler.aerial-rotate.plist        # root LaunchDaemon: WatchPaths trigger -> rotate (installed to /Library/LaunchDaemons/)
+com.tyler.aerial-rotate-agent.plist  # user LaunchAgent: daily schedule -> touch trigger (installed to ~/Library/LaunchAgents/)
+install.sh                           # one-shot installer (sudo)
+app/                                 # SwiftUI menu-bar status app (see app/README.md)
 ```
 
 ## Menu-bar app
@@ -80,14 +101,16 @@ This installs the script and daemon, ensures swiftDialog is present, loads the d
 # watch the log
 tail -f /var/log/aerial-rotate.log
 
-# run a rotation by hand
-sudo /bin/bash /usr/local/bin/aerial-rotate.sh
+# run a rotation by hand (no sudo: fires the daemon via the WatchPaths trigger)
+touch /usr/local/var/aerial-rotate/trigger
 
-# see the daemon
-sudo launchctl print system/com.tyler.aerial-rotate
+# see the two jobs
+sudo launchctl print system/com.tyler.aerial-rotate          # root daemon (watches the trigger)
+launchctl print "gui/$(id -u)/com.tyler.aerial-rotate-agent" # user agent (daily schedule)
 
-# stop / remove the daemon
+# stop / remove the daemon + agent
 sudo launchctl bootout system /Library/LaunchDaemons/com.tyler.aerial-rotate.plist
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.tyler.aerial-rotate-agent.plist
 ```
 
 State files:
@@ -100,7 +123,7 @@ State files:
 
 ## Notes / gotchas
 
-- The video dir is `root`-owned, so all file ops need root, which is why this is a **LaunchDaemon** (not a user LaunchAgent). `Index.plist` is user-owned; the script chowns it back to the user after editing.
+- The video dir is `root`-owned, so the rotation itself runs as root from a **LaunchDaemon**. A user **LaunchAgent** owns the schedule and fires the daemon by touching a WatchPaths trigger (see "How a run is triggered"), which is what keeps the app's Refresh and reschedule buttons password-free. `Index.plist` is user-owned; the script chowns it back to the user after editing.
 - Catalog asset fields used: `id`, `url-4K-SDR-240FPS`, `accessibilityLabel` (human name), `includeInShuffle`.
 - Built and tested on macOS 15 (Sequoia), Apple Silicon. The `Index.plist` key paths are macOS-version-specific; the script aborts with a clear message if Apple changes the schema.
 - `PRUNE_EVERY` in the script controls how often the dir is pruned to one video. Set it to `1` once you have confirmed the Shuffle-kill stops the prefetch.

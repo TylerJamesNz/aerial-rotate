@@ -3,8 +3,9 @@ import Foundation
 /// Filesystem locations the app reads. These mirror the daemon
 /// (`aerial-rotate.sh`) exactly; the app is a read-only face over the same
 /// files. All of these are world-readable, so no Full Disk Access or root is
-/// needed for reads. The one write (rescheduling the daemon plist) goes through
-/// `DaemonScheduler` with an admin-auth prompt.
+/// needed for reads. The two writes (touching the sentinel for "Refresh now",
+/// and rewriting the user agent plist to reschedule) are both user-owned, so
+/// neither needs root, see `DaemonScheduler`.
 enum Config {
     static let log = "/var/log/aerial-rotate.log"
     static let state = "/var/log/aerial-rotate.state"
@@ -24,6 +25,23 @@ enum Config {
     static let daemonPlist = "/Library/LaunchDaemons/com.tyler.aerial-rotate.plist"
     static let daemonLabel = "com.tyler.aerial-rotate"
     static let daemonScript = "/usr/local/bin/aerial-rotate.sh"
+
+    /// WatchPaths trigger the root daemon watches. Bumping its mtime (the
+    /// "Refresh now" button, or the user agent at the scheduled time) fires a
+    /// privileged rotation with no password. User-owned dir, so the app writes
+    /// it without sudo. Must match `WatchPaths` in com.tyler.aerial-rotate.plist
+    /// and `SENTINEL` in aerial-rotate.sh.
+    static let sentinel = "/usr/local/var/aerial-rotate/trigger"
+
+    /// User LaunchAgent that owns the daily schedule. The app rewrites this plist
+    /// to reschedule (it's user-owned, so no password); the agent's only job is
+    /// to touch the sentinel at the scheduled time. The rotation time is read
+    /// from here now, not the root daemon plist.
+    static let agentLabel = "com.tyler.aerial-rotate-agent"
+    static var userAgentPlist: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return home + "/Library/LaunchAgents/com.tyler.aerial-rotate-agent.plist"
+    }
 
     /// User-owned wallpaper store holding the currently pinned asset id.
     static var wallpaperStore: String {
