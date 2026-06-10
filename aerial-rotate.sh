@@ -155,16 +155,17 @@ download_with_progress() {
   rm -f "$TMP"
   curl -fL --connect-timeout 30 --retry 2 -o "$TMP" "$NEW_URL" &
   local pid=$! milestone=0 cur pct
+  local step=2          # report every ~2% so the bar climbs, not in 20% jumps
   while kill -0 "$pid" 2>/dev/null; do
     if [ -n "${EXPECTED:-}" ] && [ "$EXPECTED" -gt 0 ] && [ -f "$TMP" ]; then
       cur=$(stat -f%z "$TMP" 2>/dev/null || echo 0)
       pct=$(( cur * 100 / EXPECTED ))
-      if [ "$pct" -ge $((milestone + 20)) ] && [ "$milestone" -lt 80 ]; then
-        milestone=$(( (pct / 20) * 20 ))
+      if [ "$pct" -ge $((milestone + step)) ] && [ "$milestone" -lt 98 ]; then
+        milestone=$(( (pct / step) * step ))
         notify "Downloading $NEW_NAME" "${milestone}% ($(( cur / 1024 / 1024 )) MB)"
       fi
     fi
-    sleep 2
+    sleep 1
   done
   wait "$pid"; return $?
 }
