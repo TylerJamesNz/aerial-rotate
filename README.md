@@ -39,21 +39,19 @@ at both `AllSpacesAndDisplays.Linked.Content.Shuffle` and `SystemDefault.Linked.
 
 The fix is to `plutil -remove` the `Shuffle` dict from both paths after pinning, then verify it is gone. That is what actually stops the prefetch.
 
-## terminal-notifier (part of the solution)
+## swiftDialog (notifications)
 
-The script posts banner notifications as it works. The obvious way (`osascript -e 'display notification ...'`) posts under the **Script Editor** app identity, which on a normal Mac is either denied notification permission or set to deliver silently, so the banners never appear (and a Focus mode suppresses them even when permission is granted).
+The script posts banner notifications as it works. Both obvious approaches are **dead on macOS 15**: `osascript -e 'display notification ...'` and `terminal-notifier` (last released 2017) use Apple's old `NSUserNotification` API, which on macOS 15 silently no-ops. It never displays a banner and never registers in **System Settings > Notifications**, so there is nothing to permission-grant. osascript additionally posts under a non-permitted host-app identity, which gets dropped.
 
-So the notification path uses [**terminal-notifier**](https://github.com/julienXX/terminal-notifier) instead. It ships its own app bundle with its own notification authorization, so banners actually show as top-corner notifications, survive being posted from a LaunchDaemon context, and can be grouped (`-group aerial-rotate`) so progress banners replace each other rather than stacking.
-
-`notify()` prefers `terminal-notifier` when it is installed and **falls back to `osascript`** if it is not, so the script still runs on a bare machine, you just may not see the banners.
-
-Install it with:
+So the notification path uses [**swiftDialog**](https://github.com/swiftDialog/swiftDialog) instead, the Mac-admin community standard for notifications from scripts and daemons. It is notarized/signed, **requires macOS 15+** (built for Sequoia), and registers correctly in Notifications settings so it can be permission-granted. Its `/usr/local/bin/dialog` launcher detects root context and bridges into the logged-in user's GUI session via `launchctl asuser` on its own, so the daemon (which runs as root) can call it directly:
 
 ```
-brew install terminal-notifier
+/usr/local/bin/dialog --notification --title "🌄 Aerial" --subtitle "<event>" --message "<detail>"
 ```
 
-`install.sh` does this for you. The first banner may require you to allow notifications for terminal-notifier once in **System Settings > Notifications**.
+`notify()` always writes a `NOTIFY:` line to the log first, then fires the banner if `dialog` is present, so a run is always traceable in the log even if the banner is missing.
+
+`install.sh` installs swiftDialog for you via its official notarized `.pkg` (no Homebrew dependency). The first banner may require a one-time **Allow Notifications for Dialog** toggle in **System Settings > Notifications**; "Dialog" will be in the list once it has fired once.
 
 ## Layout
 
@@ -69,7 +67,7 @@ install.sh                       # one-shot installer (sudo)
 sudo ./install.sh
 ```
 
-This installs the script and daemon, ensures terminal-notifier is present, loads the daily timer, and runs one rotation immediately so you can watch the banners.
+This installs the script and daemon, ensures swiftDialog is present, loads the daily timer, and runs one rotation immediately so you can watch the banners.
 
 ## Operate
 
