@@ -42,6 +42,28 @@ echo "== loading daemon (daily at 12:00) =="
 launchctl bootout system /Library/LaunchDaemons/com.tyler.aerial-rotate.plist 2>/dev/null || true
 launchctl bootstrap system /Library/LaunchDaemons/com.tyler.aerial-rotate.plist
 
+echo "== building + installing the menu-bar app =="
+# The app is the interactive face over the daemon's log/state. It must run in
+# the user's GUI session (login item), never as a daemon, because that's the
+# only context where UNUserNotificationCenter works (the root daemon can't get a
+# notification grant, swiftDialog issue #373). Build AS THE USER so .build/ and
+# the ad-hoc signature aren't root-owned; a build failure warns but does not
+# abort the daemon install.
+USER_UID=$(id -u "$TARGET_USER")
+if sudo -u "$TARGET_USER" /bin/bash "$REPO_DIR/app/build.sh"; then
+  rm -rf /Applications/AerialRotate.app
+  cp -R "$REPO_DIR/app/AerialRotate.app" /Applications/
+  # Register as a hidden login item (run in the user's GUI session).
+  launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" osascript -e \
+    'tell application "System Events" to make login item at end with properties {path:"/Applications/AerialRotate.app", hidden:true}' \
+    >/dev/null 2>&1 || echo "  WARN: could not register login item (add it manually in System Settings > General > Login Items)"
+  # Launch it now so it can catch this install's rotation banners.
+  launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" open -a /Applications/AerialRotate.app || true
+  echo "  installed /Applications/AerialRotate.app (first launch may prompt to Allow Notifications)"
+else
+  echo "  WARN: app build failed — daemon is installed, but the menu-bar app was not. See output above."
+fi
+
 echo "== running one rotation now (watch for the banners) =="
 /bin/bash /usr/local/bin/aerial-rotate.sh
 

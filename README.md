@@ -59,7 +59,12 @@ So the notification path uses [**swiftDialog**](https://github.com/swiftDialog/s
 aerial-rotate.sh                 # the rotation script (installed to /usr/local/bin/)
 com.tyler.aerial-rotate.plist    # LaunchDaemon, runs daily at 12:00 (installed to /Library/LaunchDaemons/)
 install.sh                       # one-shot installer (sudo)
+app/                             # SwiftUI menu-bar status app (see app/README.md)
 ```
+
+## Menu-bar app
+
+`app/` is a native SwiftUI menu-bar app (`AerialRotate.app`) that puts an interactive face on the daemon: live rotation progress, the current wallpaper with Reveal-in-Finder, disk usage, a countdown to the next rotation, a sun/moon clock to set the daily time, and the full installed-aerial catalog flagging anything macOS prefetched. It reads the daemon's own log/state (no daemon rewrite) and posts its own Notification Center banners from the user GUI session, where the root daemon can't. `install.sh` builds and installs it as a login item. See [app/README.md](app/README.md).
 
 ## Install
 
