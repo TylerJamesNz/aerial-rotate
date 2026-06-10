@@ -216,6 +216,24 @@ for kp in "${CFG_PATHS[@]}"; do
   plutil -replace "$kp" -data "$B64" "$STORE" || log "WARN: could not write $kp"
 done
 
+# The assetID alone does NOT render: the live desktop only repaints when each
+# Choice's Provider is 'com.apple.wallpaper.choice.aerials'. The daemon used to
+# leave Provider='default' (assetID written, Provider untouched), which is why
+# System Settings showed 'Unknown' + a black [?] and the old aerial kept playing.
+# Confirmed byte-for-byte against GOLD-index-after-manual-select.txt.
+for kp in "${CFG_PATHS[@]}"; do
+  pp="${kp%.Configuration}.Provider"
+  plutil -replace "$pp" -string "com.apple.wallpaper.choice.aerials" "$STORE" \
+    || log "WARN: could not write $pp"
+done
+
+# Bump LastSet/LastUse to now so WallpaperAgent treats this as a fresh pick.
+NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+for lp in "AllSpacesAndDisplays.Linked" "SystemDefault.Linked"; do
+  plutil -replace "$lp.LastSet" -date "$NOW_ISO" "$STORE" || log "WARN: could not write $lp.LastSet"
+  plutil -replace "$lp.LastUse" -date "$NOW_ISO" "$STORE" || log "WARN: could not write $lp.LastUse"
+done
+
 # Remove the Shuffle dict so macOS stops cycling/prefetching new aerials.
 # This is the actual fix for the OS re-downloading videos behind our back:
 # pinning the assetID stops the displayed shuffle, but the Shuffle dict
