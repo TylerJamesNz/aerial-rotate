@@ -169,7 +169,7 @@ TMP="$VIDEO_DIR/.$NEW_ID.download"
 
 EXPECTED=$(curl -fsSLI "$NEW_URL" | awk 'tolower($1)=="content-length:"{print $2}' | tr -d '\r')
 EXP_MB=$(( ${EXPECTED:-0} / 1024 / 1024 ))
-notify "Downloading $NEW_NAME" "0% of ${EXP_MB} MB"
+notify "Downloading $NEW_NAME [$NEW_ID]" "0% of ${EXP_MB} MB"
 log "downloading $NEW_NAME (${EXP_MB} MB)"
 
 download_with_progress() {
@@ -183,7 +183,7 @@ download_with_progress() {
       pct=$(( cur * 100 / EXPECTED ))
       if [ "$pct" -ge $((milestone + step)) ] && [ "$milestone" -lt 98 ]; then
         milestone=$(( (pct / step) * step ))
-        notify "Downloading $NEW_NAME" "${milestone}% ($(( cur / 1024 / 1024 )) MB)"
+        notify "Downloading $NEW_NAME [$NEW_ID]" "${milestone}% ($(( cur / 1024 / 1024 )) MB)"
       fi
     fi
     sleep 1

@@ -7,6 +7,7 @@ struct DownloadProgress: Equatable {
     var name: String
     var percent: Int
     var megabytes: Int?
+    var assetID: String?
 }
 
 /// Single source of truth the views observe. All mutation happens on the main
