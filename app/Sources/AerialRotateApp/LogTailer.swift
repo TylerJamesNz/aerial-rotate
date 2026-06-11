@@ -134,10 +134,18 @@ final class LogTailer {
         let (title, msg) = Self.splitTitleMsg(payload)
 
         if title.hasPrefix("Downloading") {
-            let name = String(title.dropFirst("Downloading".count)).trimmingCharacters(in: .whitespaces)
+            var name = String(title.dropFirst("Downloading".count)).trimmingCharacters(in: .whitespaces)
+            // The daemon appends the asset id in brackets ("Downloading Yosemite
+            // [<uuid>]") so the UI can tell same-named aerials apart. Peel it off;
+            // older log lines without brackets leave assetID nil.
+            var assetID: String? = nil
+            if name.hasSuffix("]"), let open = name.lastIndex(of: "[") {
+                assetID = String(name[name.index(after: open)..<name.index(before: name.endIndex)])
+                name = String(name[..<open]).trimmingCharacters(in: .whitespaces)
+            }
             let pct = Self.firstInt(in: msg, suffix: "%") ?? 0
             let mb = Self.firstInt(in: msg, suffix: "MB")
-            let prog = DownloadProgress(name: name, percent: pct, megabytes: mb)
+            let prog = DownloadProgress(name: name, percent: pct, megabytes: mb, assetID: assetID)
             DispatchQueue.main.async {
                 AppState.shared.progress = prog
                 AppState.shared.recordEvent("Downloading \(name): \(pct)%")

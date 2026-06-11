@@ -47,6 +47,7 @@ private struct CurrentWallpaperCard: View {
             HStack {
                 Image(systemName: "photo.fill").foregroundStyle(.secondary)
                 Text(state.currentName).font(.title3).lineLimit(2)
+                ShortIDTag(id: state.snapshot.currentID ?? "", name: state.currentName)
                 Spacer()
                 Button {
                     if let url = WallpaperStore.currentMovURL() {
@@ -69,7 +70,10 @@ private struct DownloadProgressView: View {
     var body: some View {
         if let p = state.progress {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Downloading \(p.name.isEmpty ? "aerial" : p.name)").font(.headline)
+                HStack(spacing: 6) {
+                    Text("Downloading \(p.name.isEmpty ? "aerial" : p.name)").font(.headline)
+                    ShortIDTag(id: p.assetID ?? "", name: p.name)
+                }
                 ProgressView(value: Double(p.percent), total: 100)
                 HStack {
                     Text("\(p.percent)%")
@@ -214,7 +218,10 @@ private struct CacheListView: View {
                         .foregroundStyle(item.isCurrent ? Color.accentColor : Color.secondary)
                     AerialThumbnail(id: item.id)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(item.name).lineLimit(1)
+                        HStack(spacing: 6) {
+                            Text(item.name).lineLimit(1)
+                            ShortIDTag(id: item.id, name: item.name)
+                        }
                         if item.appearedWithoutDaemon {
                             Label("appeared (OS prefetch)", systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption2).foregroundStyle(.orange)
@@ -337,10 +344,27 @@ private enum ThumbnailCache {
 
 // MARK: - formatting
 
+/// Dimmed, monospaced first-8 of the asset UUID, shown after a name so two
+/// same-named aerials (Apple ships several "Yosemite" clips, each a distinct
+/// asset id) can be told apart. Renders nothing when the name already falls back
+/// to the id (no human label), so the UUID never prints twice.
+private struct ShortIDTag: View {
+    let id: String
+    let name: String
+    var body: some View {
+        if !id.isEmpty && id != name {
+            Text(Format.shortID(id))
+                .font(.caption).monospaced().foregroundStyle(.secondary)
+        }
+    }
+}
+
 enum Format {
     static func bytes(_ n: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
     }
+
+    static func shortID(_ id: String) -> String { String(id.prefix(8)).lowercased() }
 
     static func countdown(_ seconds: TimeInterval) -> String {
         let s = Int(seconds)
