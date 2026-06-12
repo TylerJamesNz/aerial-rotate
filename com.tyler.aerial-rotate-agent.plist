@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tyler.aerial-rotate-agent</string>
+    <!-- Runs as the user. Its only job is to bump the trigger file's mtime at
+         the scheduled time; the root LaunchDaemon watches that file (WatchPaths)
+         and does the privileged rotation. Splitting timing (here, user-owned)
+         from privilege (the daemon) is what lets the app reschedule without a
+         password: this plist is user-owned, so the app rewrites it freely. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/touch</string>
+        <string>/usr/local/var/aerial-rotate/trigger</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>12</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
