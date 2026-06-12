@@ -123,9 +123,13 @@ private struct NextRotationView: View {
                 let remaining = max(0, target.timeIntervalSince(ctx.date))
                 HStack {
                     Image(systemName: "clock").foregroundStyle(.secondary)
-                    Text(Format.countdown(remaining)).monospacedDigit()
-                    Text("· daily at \(String(format: "%02d:%02d", state.rotationHour, state.rotationMinute))")
-                        .foregroundStyle(.secondary)
+                    if state.rotationTimes.isEmpty {
+                        Text("no rotations scheduled").foregroundStyle(.secondary)
+                    } else {
+                        Text(Format.countdown(remaining)).monospacedDigit()
+                        Text("· daily at \(Format.timeList(state.rotationTimes))")
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .font(.callout)
             }
@@ -365,6 +369,13 @@ enum Format {
     }
 
     static func shortID(_ id: String) -> String { String(id.prefix(8)).lowercased() }
+
+    /// "8:00, 12:00, 18:30" for the schedule label (sorted, no zero-padded hour).
+    static func timeList(_ times: [RotationTime]) -> String {
+        times.sorted()
+            .map { String(format: "%d:%02d", $0.hour, $0.minute) }
+            .joined(separator: ", ")
+    }
 
     static func countdown(_ seconds: TimeInterval) -> String {
         let s = Int(seconds)
