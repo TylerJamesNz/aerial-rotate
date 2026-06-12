@@ -5,16 +5,21 @@
 # to run manually with sudo.
 #
 # Each run:
-#   1. snapshots the video dir and reports which .mov's APPEARED since the last run
-#      (diagnostic: shows whether macOS prefetched aerials on its own)
-#   2. picks a random aerial from the catalog (excludes the current one)
-#   3. downloads just that one .mov, posting % banners as it goes, verifies its size
-#   4. pins the wallpaper to it (edits the user's Index.plist), removes the Shuffle
-#      dict so the OS stops cycling/prefetching, then reloads WallpaperAgent
-#   5. prunes every other .mov — but only every PRUNE_EVERY runs, so accumulation
-#      between prunes stays observable while we confirm the Shuffle-kill worked
+#   1. unlocks the video dir (chflags nouchg) — it sits user-immutable between
+#      runs so the prefetcher (idleassetsd, runs as _assetsd) can't add aerials
+#   2. snapshots the dir and reports which .mov's APPEARED since last run
+#      (diagnostic: proves whether the lock held)
+#   3. picks a random aerial from the catalog (excludes the current one)
+#   4. downloads just that one .mov, posting % banners as it goes, verifies size
+#   5. pins the wallpaper to it (edits Index.plist), removes the Shuffle dict,
+#      then reloads WallpaperAgent
+#   6. cleans every other .mov (anything the OS snuck in while unlocked), then
+#      relocks the dir (chflags uchg) so it stays a single-file cache
 #
-# Aborts WITHOUT deleting the old video if the download or verify fails.
+# Removing the Shuffle dict alone did NOT stop the prefetcher (it kept pulling
+# aerials with the dict gone); the chflags lock is the real enforcement. Aborts
+# WITHOUT deleting the old video on download/verify failure, and an EXIT trap
+# relocks the dir on every exit path so a failed run never leaves it writable.
 
 set -uo pipefail
 
@@ -25,14 +30,15 @@ ENTRIES="$ASSET_ROOT/entries.json"
 VIDEO_DIR="$ASSET_ROOT/4KSDR240FPS"
 LOG="/var/log/aerial-rotate.log"
 STATE="/var/log/aerial-rotate.state"           # end-of-run snapshot of the video dir
-COUNTER="/var/log/aerial-rotate.prune-counter" # runs since last prune
-PRUNE_EVERY=2                                  # prune the dir down to one video every Nth run
 
 USER_HOME=$(/usr/bin/dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
 USER_UID=$(/usr/bin/id -u "$TARGET_USER" 2>/dev/null)
 STORE="$USER_HOME/Library/Application Support/com.apple.wallpaper/Store/Index.plist"
 
-NOTIFIER="/opt/homebrew/bin/terminal-notifier"  # preferred banner sender; falls back to osascript
+SENTINEL="/usr/local/var/aerial-rotate/trigger"  # WatchPaths trigger: a fresh touch (user agent at the scheduled time, or the app's Refresh button) fires this daemon
+SENTINEL_MAX_AGE=120                              # seconds; older = a launchd load-fire (boot/reload), not a real trigger -> skip
+
+DIALOG="/usr/local/bin/dialog"  # swiftDialog: registers on macOS 15 + bridges root->user session itself
 
 CFG_PATHS=(
   "AllSpacesAndDisplays.Linked.Content.Choices.0.Configuration"
@@ -46,22 +52,21 @@ SHUF_PATHS=(
 log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; }
 die() { log "ABORT: $*"; notify "Aerial rotate failed" "$*"; exit 1; }
 
-# native macOS banner, posted into the logged-in user's GUI session.
-# Prefers terminal-notifier (its own bundle id + notification permission means
-# banners actually show; osascript posts as "Script Editor" which is easily
-# suppressed or unauthorised). Falls back to osascript if terminal-notifier
-# isn't installed, so the script still works on a bare machine.
+# Record a notification event. The daemon only LOGS it now; the menu-bar app
+# (app/) owns the user-facing surface, watching this log and posting Notification
+# Center banners + a smooth in-window progress bar from the user GUI session
+# (the one context where UNUserNotificationCenter works, which a root daemon
+# can't reach, swiftDialog issue #373). The earlier swiftDialog --mini window is
+# retired: it spawned a fresh auto-dismissing window per milestone, which
+# flickered. Keep the NOTIFY: log line exactly as-is, it is the app's data feed.
 notify() {
   local title="$1" msg="$2"
-  if [ -x "$NOTIFIER" ]; then
-    launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" \
-      "$NOTIFIER" -group aerial-rotate -title "🌄 Aerial" -subtitle "$title" -message "$msg" \
-      >/dev/null 2>&1 || true
-  else
-    launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" \
-      /usr/bin/osascript -e "display notification \"${msg//\"/}\" with title \"🌄 Aerial\" subtitle \"${title//\"/}\"" \
-      >/dev/null 2>&1 || true
-  fi
+  log "NOTIFY: $title - $msg"
+  # swiftDialog window retired: the menu-bar app (app/) now owns notifications.
+  # It posts Notification Center banners from the user GUI session and shows a
+  # smooth in-window progress bar. The NOTIFY: log line above is the app's data
+  # channel (LogTailer parses it), so it stays. This kills the per-milestone
+  # window flicker (each swiftDialog call was a new auto-dismissing window).
 }
 
 # emit "<id> <mtime-epoch>" per .mov in the video dir, sorted by id
@@ -74,6 +79,31 @@ snapshot_dir() {
     printf '%s %s\n' "$id" "$m"
   done < <(find "$VIDEO_DIR" -maxdepth 1 -name '*.mov') | sort
 }
+
+# ---- cache lock (chflags) ---------------------------------------------------
+# idleassetsd runs as _assetsd, not root, so a root-set user-immutable flag on
+# the video dir blocks it from adding new .mov's — the durable fix the Shuffle
+# removal didn't deliver. Both helpers are idempotent and never fatal.
+lock_cache()   { chflags uchg   "$VIDEO_DIR" 2>/dev/null && log "locked cache dir (uchg)"     || log "WARN: could not lock $VIDEO_DIR"; }
+unlock_cache() { chflags nouchg "$VIDEO_DIR" 2>/dev/null && log "unlocked cache dir (nouchg)" || log "WARN: could not unlock $VIDEO_DIR"; }
+
+# ---- WatchPaths load-fire guard ---------------------------------------------
+# launchd starts a WatchPaths job once at load (boot / install / daemon reload),
+# not only when the path later changes. A real trigger always bumps the sentinel
+# mtime to ~now; a load-fire sees yesterday's mtime (or no file at all). Skip
+# unless the sentinel was freshly touched, so a reboot never rotates on its own.
+# This also debounces an accidental double-click of the app's Refresh button.
+# The script NEVER writes the sentinel, so this watch can't feed back on itself.
+if [ ! -f "$SENTINEL" ]; then
+  log "no trigger at $SENTINEL (load-fire before first touch); skipping."
+  exit 0
+fi
+sentinel_age=$(( $(date +%s) - $(stat -f '%m' "$SENTINEL" 2>/dev/null || echo 0) ))
+if [ "$sentinel_age" -gt "$SENTINEL_MAX_AGE" ]; then
+  log "stale trigger (age ${sentinel_age}s > ${SENTINEL_MAX_AGE}s); spurious load-fire, skipping."
+  exit 0
+fi
+log "fresh trigger (age ${sentinel_age}s); proceeding with rotation."
 
 # ---- preflight --------------------------------------------------------------
 [ "$(id -u)" -eq 0 ]      || die "must run as root (video dir is root-owned)"
@@ -88,6 +118,11 @@ CURRENT_ID=$(plutil -extract "${CFG_PATHS[0]}" raw "$STORE" 2>/dev/null \
   | base64 --decode 2>/dev/null \
   | plutil -extract assetID raw - 2>/dev/null)
 log "current assetID: ${CURRENT_ID:-<none>}"
+
+# ---- unlock for the run; relock on ANY exit --------------------------------
+trap lock_cache EXIT
+unlock_cache
+notify "Rotating aerial" "unlocked cache, selecting a new aerial"
 
 # ---- diagnostic: what appeared since last run -------------------------------
 CURRENT_SNAP=$(snapshot_dir)
@@ -134,23 +169,24 @@ TMP="$VIDEO_DIR/.$NEW_ID.download"
 
 EXPECTED=$(curl -fsSLI "$NEW_URL" | awk 'tolower($1)=="content-length:"{print $2}' | tr -d '\r')
 EXP_MB=$(( ${EXPECTED:-0} / 1024 / 1024 ))
-notify "Downloading $NEW_NAME" "0% of ${EXP_MB} MB"
+notify "Downloading $NEW_NAME [$NEW_ID]" "0% of ${EXP_MB} MB"
 log "downloading $NEW_NAME (${EXP_MB} MB)"
 
 download_with_progress() {
   rm -f "$TMP"
   curl -fL --connect-timeout 30 --retry 2 -o "$TMP" "$NEW_URL" &
   local pid=$! milestone=0 cur pct
+  local step=2          # report every ~2% so the bar climbs, not in 20% jumps
   while kill -0 "$pid" 2>/dev/null; do
     if [ -n "${EXPECTED:-}" ] && [ "$EXPECTED" -gt 0 ] && [ -f "$TMP" ]; then
       cur=$(stat -f%z "$TMP" 2>/dev/null || echo 0)
       pct=$(( cur * 100 / EXPECTED ))
-      if [ "$pct" -ge $((milestone + 20)) ] && [ "$milestone" -lt 80 ]; then
-        milestone=$(( (pct / 20) * 20 ))
-        notify "Downloading $NEW_NAME" "${milestone}% ($(( cur / 1024 / 1024 )) MB)"
+      if [ "$pct" -ge $((milestone + step)) ] && [ "$milestone" -lt 98 ]; then
+        milestone=$(( (pct / step) * step ))
+        notify "Downloading $NEW_NAME [$NEW_ID]" "${milestone}% ($(( cur / 1024 / 1024 )) MB)"
       fi
     fi
-    sleep 2
+    sleep 1
   done
   wait "$pid"; return $?
 }
@@ -180,6 +216,24 @@ for kp in "${CFG_PATHS[@]}"; do
   plutil -replace "$kp" -data "$B64" "$STORE" || log "WARN: could not write $kp"
 done
 
+# The assetID alone does NOT render: the live desktop only repaints when each
+# Choice's Provider is 'com.apple.wallpaper.choice.aerials'. The daemon used to
+# leave Provider='default' (assetID written, Provider untouched), which is why
+# System Settings showed 'Unknown' + a black [?] and the old aerial kept playing.
+# Confirmed byte-for-byte against GOLD-index-after-manual-select.txt.
+for kp in "${CFG_PATHS[@]}"; do
+  pp="${kp%.Configuration}.Provider"
+  plutil -replace "$pp" -string "com.apple.wallpaper.choice.aerials" "$STORE" \
+    || log "WARN: could not write $pp"
+done
+
+# Bump LastSet/LastUse to now so WallpaperAgent treats this as a fresh pick.
+NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+for lp in "AllSpacesAndDisplays.Linked" "SystemDefault.Linked"; do
+  plutil -replace "$lp.LastSet" -date "$NOW_ISO" "$STORE" || log "WARN: could not write $lp.LastSet"
+  plutil -replace "$lp.LastUse" -date "$NOW_ISO" "$STORE" || log "WARN: could not write $lp.LastUse"
+done
+
 # Remove the Shuffle dict so macOS stops cycling/prefetching new aerials.
 # This is the actual fix for the OS re-downloading videos behind our back:
 # pinning the assetID stops the displayed shuffle, but the Shuffle dict
@@ -201,25 +255,24 @@ fi
 launchctl asuser "$USER_UID" killall WallpaperAgent 2>/dev/null || true
 log "pinned wallpaper to $NEW_NAME"
 
-# ---- prune every Nth run (so accumulation between prunes is observable) ------
-n=0; [ -f "$COUNTER" ] && n=$(cat "$COUNTER" 2>/dev/null || echo 0)
-n=$((n + 1))
-if [ "$n" -ge "$PRUNE_EVERY" ]; then
-  freed=0
-  while IFS= read -r f; do
-    [ "$f" = "$DEST" ] && continue
-    sz=$(stat -f%z "$f" 2>/dev/null || echo 0)
-    rm -f "$f" && freed=$((freed + sz))
-  done < <(find "$VIDEO_DIR" -maxdepth 1 -name '*.mov')
-  freed_mb=$((freed / 1024 / 1024))
-  log "pruned others (run $n/$PRUNE_EVERY), freed ${freed_mb} MB — one aerial on disk: $NEW_NAME"
-  notify "✅ New wallpaper applied" "$NEW_NAME — freed ${freed_mb} MB"
-  echo 0 > "$COUNTER"
+# ---- clean anything the OS snuck in, then relock ---------------------------
+# The dir was writable this run, so idleassetsd may have slipped extra aerials
+# in. Delete every .mov except the one we just pinned; the EXIT trap relocks.
+snuck=0; freed=0
+while IFS= read -r f; do
+  [ "$f" = "$DEST" ] && continue
+  sz=$(stat -f%z "$f" 2>/dev/null || echo 0)
+  rm -f "$f" && { snuck=$((snuck + 1)); freed=$((freed + sz)); }
+done < <(find "$VIDEO_DIR" -maxdepth 1 -name '*.mov')
+freed_mb=$((freed / 1024 / 1024))
+if [ "$snuck" -gt 0 ]; then
+  log "cleanup: removed $snuck stray .mov(s) the OS added, freed ${freed_mb} MB"
 else
-  log "skip prune this run ($n/$PRUNE_EVERY) — leaving extra videos on disk to observe accumulation"
-  notify "✅ New wallpaper applied" "$NEW_NAME — prune skipped ($n/$PRUNE_EVERY)"
-  echo "$n" > "$COUNTER"
+  log "cleanup: no strays — only the pinned aerial on disk"
 fi
+
+lock_cache
+notify "✅ New wallpaper applied" "$NEW_NAME — cleaned ${snuck} stray, freed ${freed_mb} MB, cache locked"
 
 # ---- write end-of-run snapshot for next run's diagnostic --------------------
 snapshot_dir > "$STATE"

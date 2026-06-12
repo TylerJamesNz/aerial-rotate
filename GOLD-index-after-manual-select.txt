@@ -1,0 +1,77 @@
+# Captured 2026-06-11 after manually selecting North America Aurora via System Settings (RENDERS correctly, Show as wallpaper ON).
+# This is the format the daemon's pin must replicate. Compare to daemon output (Provider=default, Files=[], assetID-only Configuration).
+# macOS 15.7.4 Sequoia (24G517)
+
+=== plutil -p Index.plist ===
+{
+  "AllSpacesAndDisplays" => {
+    "Linked" => {
+      "Content" => {
+        "Choices" => [
+          0 => {
+            "Configuration" => {length = 93, bytes = 0x62706c69 73743030 d1010257 61737365 ... 00000000 0000003a }
+            "Files" => [
+            ]
+            "Provider" => "com.apple.wallpaper.choice.aerials"
+          }
+        ]
+        "Shuffle" => {
+          "Duration" => [
+            0 => 2341
+            1 => 16172123445939666944
+          ]
+          "Type" => "afterDuration"
+        }
+      }
+      "LastSet" => 2026-06-10 23:14:38 +0000
+      "LastUse" => 2026-06-10 23:14:38 +0000
+    }
+    "Type" => "linked"
+  }
+  "Displays" => {
+  }
+  "Spaces" => {
+  }
+  "SystemDefault" => {
+    "Linked" => {
+      "Content" => {
+        "Choices" => [
+          0 => {
+            "Configuration" => {length = 93, bytes = 0x62706c69 73743030 d1010257 61737365 ... 00000000 0000003a }
+            "Files" => [
+            ]
+            "Provider" => "com.apple.wallpaper.choice.aerials"
+          }
+        ]
+        "Shuffle" => {
+          "Duration" => [
+            0 => 2341
+            1 => 16172123445939666944
+          ]
+          "Type" => "afterDuration"
+        }
+      }
+      "LastSet" => 2026-06-10 23:14:38 +0000
+      "LastUse" => 2026-06-10 23:14:38 +0000
+    }
+    "Type" => "linked"
+  }
+}
+
+=== decoded Configurations (Provider + Configuration per Choice) ===
+--- SystemDefault Provider ---
+com.apple.wallpaper.choice.aerials
+--- SystemDefault Configuration (decoded) ---
+{
+  "assetID" => "737E9E24-49BE-4104-9B72-F352DE1AD2BF"
+}
+--- SystemDefault Files ---
+0
+--- AllSpacesAndDisplays Provider ---
+com.apple.wallpaper.choice.aerials
+--- AllSpacesAndDisplays Configuration (decoded) ---
+{
+  "assetID" => "737E9E24-49BE-4104-9B72-F352DE1AD2BF"
+}
+--- AllSpacesAndDisplays Files ---
+0
