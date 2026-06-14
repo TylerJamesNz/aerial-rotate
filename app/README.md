@@ -52,5 +52,6 @@ time both act instantly with no password prompt, then the window updates.
 - `../aerial-rotate.sh` — the daemon; source of the log/state the app reads.
 - `../com.tyler.aerial-rotate.plist` — root daemon, WatchPaths trigger -> rotate.
 - `../com.tyler.aerial-rotate-agent.plist` — user agent; the schedule the app reads and rewrites.
-- `../install.sh` — builds the app as the user and installs it as a login item.
+- `../install.sh` — one-time per-Mac install: privileged daemon/agent/swiftDialog, then calls `update.sh` for the app.
 - `build.sh` — `swift build` + bundle assembly + ad-hoc codesign.
+- `update.sh` — no-sudo app update: build, quit, swap into `~/Applications`, fix the login item, relaunch. The recurring path is `git pull && ./app/update.sh`.

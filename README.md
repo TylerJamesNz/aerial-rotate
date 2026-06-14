@@ -85,7 +85,18 @@ app/                                 # SwiftUI menu-bar status app (see app/READ
 
 ## Menu-bar app
 
-`app/` is a native SwiftUI menu-bar app (`AerialRotate.app`) that puts an interactive face on the daemon: live rotation progress, the current wallpaper with Reveal-in-Finder, disk usage, a countdown to the next rotation, a sun/moon clock to set the daily time, and the full installed-aerial catalog flagging anything macOS prefetched. It reads the daemon's own log/state (no daemon rewrite) and posts its own Notification Center banners from the user GUI session, where the root daemon can't. `install.sh` builds and installs it as a login item. See [app/README.md](app/README.md).
+`app/` is a native SwiftUI menu-bar app (`AerialRotate.app`) that puts an interactive face on the daemon: live rotation progress, the current wallpaper with Reveal-in-Finder, disk usage, a countdown to the next rotation, a sun/moon clock to set the daily time, and the full installed-aerial catalog flagging anything macOS prefetched. It reads the daemon's own log/state (no daemon rewrite) and posts its own Notification Center banners from the user GUI session, where the root daemon can't. `install.sh` builds and installs it as a login item in `~/Applications`. See [app/README.md](app/README.md).
+
+### Updating the app
+
+The app has no privileged role, so it lives in user-owned `~/Applications` and updates without a password. Two tiers:
+
+```
+sudo ./install.sh          # ONCE per Mac: daemon + user agent + swiftDialog + the app
+git pull && ./app/update.sh  # every app update after that, no sudo
+```
+
+`app/update.sh` builds the app, quits the running copy, swaps the bundle in `~/Applications`, re-points the login item, and relaunches. The menu-bar dropdown shows the running version so you can confirm an update landed. (Sparkle-style in-app auto-update is a deliberate non-goal: every Mac has the repo, so git is the update channel.)
 
 ## Install
 
