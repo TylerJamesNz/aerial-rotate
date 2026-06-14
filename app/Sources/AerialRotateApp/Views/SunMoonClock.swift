@@ -37,8 +37,12 @@ struct SunMoonClock: View {
                     HStack(spacing: 10) {
                         Image(systemName: "clock").foregroundStyle(.secondary)
                         DatePicker("", selection: timeBinding(for: rt), displayedComponents: .hourAndMinute)
-                            .datePickerStyle(.field)
+                            .datePickerStyle(.stepperField)
                             .labelsHidden()
+                            // Force 12-hour AM/PM in the field regardless of the
+                            // system's 24-hour setting, so the picker matches the
+                            // AM/PM labels everywhere else in the app.
+                            .environment(\.locale, Locale(identifier: "en_US"))
                         Spacer()
                         Button(role: .destructive) { remove(rt) } label: {
                             Image(systemName: "minus.circle.fill")
@@ -188,7 +192,7 @@ private struct CelestialDial: View {
                            style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 
             // Fine tick graduations every hour around the upper arc; cardinal
-            // hours get monospaced labels (6 / 12 / 18 on the visible track).
+            // hours get monospaced 12-hour labels (6a / 12p / 6p on the track).
             for hour in stride(from: 0, through: 24, by: 1) {
                 let sf = Double(hour) / 24.0
                 let p = point(sf, R: R, cx: cx, cy: cy)
@@ -202,7 +206,7 @@ private struct CelestialDial: View {
                                lineWidth: isCardinal ? 1.5 : 1)
                 if isCardinal && hour != 0 && hour != 24 {
                     let lp = pointAt(sf, radius: R + 11, cx: cx, cy: cy)
-                    let label = Text(String(format: "%02d", hour))
+                    let label = Text(Format.hour12Compact(hour))
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(.secondary)
                     context.draw(label, at: lp)
@@ -219,7 +223,7 @@ private struct CelestialDial: View {
                 context.fill(dot, with: .color(up ? .cyan : .secondary.opacity(0.5)))
                 context.stroke(dot, with: .color(.white.opacity(up ? 0.9 : 0.3)), lineWidth: 1)
                 let cap = pointAt(sf, radius: R + (up ? 22 : 16), cx: cx, cy: cy)
-                let label = Text(String(format: "%d:%02d", t.hour, t.minute))
+                let label = Text(Format.time12Compact(t))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(up ? Color.cyan : .secondary)
                 context.draw(label, at: cap)
