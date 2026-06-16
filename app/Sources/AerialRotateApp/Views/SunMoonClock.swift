@@ -353,8 +353,10 @@ private struct CelestialDial: View {
             let sun = pointAt(disp(0.5), radius: R, cx: cx, cy: cy)
             let moon = pointAt(disp(0.0), radius: R, cx: cx, cy: cy)
             drawBody(context, "moon.fill", at: moon, up: moon.y <= cy, color: Color(white: 0.92), glow: .white)
+            // The sun is always lit (never dimmed below the horizon) so it stays a
+            // solid, foreground body rather than a faint shape behind the ring.
             drawBody(context, "sun.max.fill", at: sun, up: sun.y <= cy,
-                     color: .orange, glow: .orange, glyph: 30, haloR: 26)
+                     color: .orange, glow: .orange, glyph: 30, haloR: 26, alwaysLit: true)
 
             // The single kept hour label: "12 PM" riding just inside the ring with the
             // sun, the one absolute anchor on an otherwise relative dial.
@@ -374,10 +376,12 @@ private struct CelestialDial: View {
             context.stroke(nowTick, with: .color(.white), lineWidth: 2.5)
             let nowComps = Calendar.current.dateComponents([.hour, .minute], from: now)
             let nowRT = RotationTime(hour: nowComps.hour ?? 0, minute: nowComps.minute ?? 0)
+            // Current time spelled out in the centre of the circle (the top notch
+            // marks where "now" sits on the ring; this is the readout).
             let nowText = Text(Format.time12(nowRT))
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .font(.system(size: 17, weight: .bold, design: .monospaced))
                 .foregroundStyle(.white)
-            context.draw(nowText, at: CGPoint(x: cx, y: cy - R - 19))
+            context.draw(nowText, at: CGPoint(x: cx, y: cy))
         }
     }
 
@@ -429,8 +433,10 @@ private struct CelestialDial: View {
     }
 
     private func drawBody(_ context: GraphicsContext, _ name: String, at p: CGPoint, up: Bool,
-                          color: Color, glow: Color, glyph: CGFloat = 18, haloR: CGFloat = 16) {
-        if up {
+                          color: Color, glow: Color, glyph: CGFloat = 18, haloR: CGFloat = 16,
+                          alwaysLit: Bool = false) {
+        let lit = up || alwaysLit
+        if lit {
             // Soft radial halo so the body pops off the dark sky: bright at the
             // centre, fading to nothing at the rim. The moon uses a white glow so
             // it stands out as much as the sun's warm one.
@@ -441,7 +447,7 @@ private struct CelestialDial: View {
         }
         let image = Image(systemName: name)
         var resolved = context.resolve(image)
-        resolved.shading = .color(up ? color : color.opacity(0.4))
+        resolved.shading = .color(lit ? color : color.opacity(0.4))
         // Draw into an explicit rect so the glyph can be scaled up (the foreground
         // sun is larger than the moon).
         let rect = CGRect(x: p.x - glyph / 2, y: p.y - glyph / 2, width: glyph, height: glyph)
