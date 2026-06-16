@@ -59,14 +59,24 @@ struct SunMoonClock: View {
                 }
             }
 
-            HStack {
-                Button { addTime() } label: { Label("Add time", systemImage: "plus.circle.fill") }
-                    .buttonStyle(.borderless)
-                Spacer()
+            HStack(spacing: 10) {
                 if busy {
                     ProgressView().controlSize(.small)
                 }
+                Spacer()
+                // Add control, right-aligned at the end of the list (the plus sits
+                // in the same column as each row's delete button), with the label
+                // to the left of the icon.
+                Button { addTime() } label: {
+                    HStack(spacing: 4) {
+                        Text("Add time")
+                        Image(systemName: "plus.circle.fill")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .help("Add a time")
             }
+            .padding(.horizontal, 8)
 
             if !status.isEmpty {
                 Text(status).font(.caption).foregroundStyle(.secondary)
