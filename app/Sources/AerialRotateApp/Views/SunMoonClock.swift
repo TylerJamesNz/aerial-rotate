@@ -379,7 +379,7 @@ private struct CelestialDial: View {
             // Current time spelled out in the centre of the circle (the top notch
             // marks where "now" sits on the ring; this is the readout).
             let nowText = Text(Format.time12(nowRT))
-                .font(.system(size: 17, weight: .bold, design: .monospaced))
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.white)
             context.draw(nowText, at: CGPoint(x: cx, y: cy))
         }
