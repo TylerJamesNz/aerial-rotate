@@ -31,9 +31,10 @@ struct SunMoonClock: View {
                     .frame(height: 172)
                     .frame(maxWidth: .infinity)
             }
+            .padding(.horizontal, 10)
 
-            VStack(spacing: 8) {
-                ForEach(state.rotationTimes) { rt in
+            VStack(spacing: 0) {
+                ForEach(Array(state.rotationTimes.enumerated()), id: \.element.id) { index, rt in
                     HStack(spacing: 10) {
                         Image(systemName: "clock").foregroundStyle(.secondary)
                         DatePicker("", selection: timeBinding(for: rt), displayedComponents: .hourAndMinute)
@@ -51,8 +52,13 @@ struct SunMoonClock: View {
                         .foregroundStyle(.red)
                         .help("Remove this time")
                     }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(index.isMultiple(of: 2) ? Color.primary.opacity(0.05) : Color.clear)
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
 
             HStack {
                 Button { addTime() } label: { Label("Add time", systemImage: "plus.circle.fill") }
