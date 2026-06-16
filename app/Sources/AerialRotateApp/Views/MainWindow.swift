@@ -5,6 +5,15 @@ import AppKit
 /// click. Holds all six features.
 struct MainWindow: View {
     @EnvironmentObject private var state: AppState
+    @State private var leftContentHeight: CGFloat = 0
+
+    /// Visible height of the screen the app sits on, less the title bar and a
+    /// small margin, used to cap the contentSize window so it grows to fit its
+    /// content but never past the screen bottom.
+    private static var maxContentHeight: CGFloat {
+        let h = NSScreen.main?.visibleFrame.height ?? 900
+        return max(520, h - 60)
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -23,7 +32,17 @@ struct MainWindow: View {
                         SunMoonClock()
                     }
                     .padding(24)
+                    .background(GeometryReader { g in
+                        Color.clear
+                            .onAppear { leftContentHeight = g.size.height }
+                            .onChange(of: g.size.height) { _, h in leftContentHeight = h }
+                    })
                 }
+                // Size the scroll area to its content so the window grows to fit
+                // when Add time appends a row (snap-to-content), capped at the
+                // screen so it never spills off the bottom; only past the cap does
+                // the column actually scroll.
+                .frame(height: max(520, min(leftContentHeight, Self.maxContentHeight)))
             }
             .frame(width: 460)
 
