@@ -18,7 +18,6 @@ struct MainWindow: View {
                     Divider()
                     DiskUsageRow()
                     NextRotationView()
-                    RotateNowButton()
                     Divider()
                     SunMoonClock()
                 }
@@ -111,10 +110,22 @@ private struct DiskUsageRow: View {
     }
 }
 
-// MARK: - 4. Next rotation countdown
+// MARK: - 4. Next rotation countdown + on-demand refresh
 
+/// The countdown to the next scheduled rotation, with the "Refresh now" button
+/// on the same line (the daily schedule itself is shown by the picker and the
+/// celestial dial below, so it isn't repeated here). Refresh runs the daily
+/// rotation on demand by bumping the WatchPaths trigger (no password: the root
+/// daemon does the privileged work). `triggered` covers the brief gap between
+/// the touch and the daemon's first log line; once `state.progress` appears,
+/// that drives the spinner until the run finishes. Disabled while any rotation
+/// is already in flight so we never double-fire.
 private struct NextRotationView: View {
     @EnvironmentObject private var state: AppState
+    @State private var triggered = false
+    @State private var error: String?
+
+    private var busy: Bool { triggered || state.progress != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -128,48 +139,24 @@ private struct NextRotationView: View {
                         Text("no rotations scheduled").foregroundStyle(.secondary)
                     } else {
                         Text(Format.countdown(remaining)).monospacedDigit()
-                        Text("· daily at \(Format.timeList(state.rotationTimes))")
-                            .foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Button(action: run) {
+                        if busy {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Rotating…")
+                            }
+                        } else {
+                            Label("Refresh now", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(busy)
+                    .help("Fetches a fresh wallpaper now. No password needed.")
                 }
                 .font(.callout)
             }
-        }
-    }
-}
-
-// MARK: - 5. Manual "rotate now" (smoke test / on-demand swap)
-
-/// Runs the daily rotation on demand by bumping the WatchPaths trigger (no
-/// password: the root daemon does the privileged work). Fire-and-forget, the
-/// existing log-tailer progress bar shows the download live. `triggered` covers
-/// the brief gap between the touch and the daemon's first log line; once
-/// `state.progress` appears, that drives the spinner until the run finishes.
-/// Disabled while any rotation is already in flight so we never double-fire.
-private struct RotateNowButton: View {
-    @EnvironmentObject private var state: AppState
-    @State private var triggered = false
-    @State private var error: String?
-
-    private var busy: Bool { triggered || state.progress != nil }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button(action: run) {
-                if busy {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Rotating…")
-                    }
-                } else {
-                    Label("Refresh wallpaper now", systemImage: "arrow.triangle.2.circlepath")
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(busy)
-
-            Text("Fetches a fresh wallpaper now. No password needed.")
-                .font(.caption).foregroundStyle(.secondary)
             if let error {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
