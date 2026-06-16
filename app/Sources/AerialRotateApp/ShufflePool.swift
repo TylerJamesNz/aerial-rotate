@@ -25,7 +25,16 @@ enum ShufflePool {
                   a["url-4K-SDR-240FPS"] != nil,
                   (a["includeInShuffle"] as? Bool) ?? true
             else { continue }
-            pool.append(ShuffleAsset(id: id, name: (a["accessibilityLabel"] as? String) ?? id))
+            // A handful of assets ship an EMPTY accessibilityLabel (not missing),
+            // so `?? id` alone leaves them blank. Fall back to the shotID
+            // ("S013_C001_F01") if present, then the short id, so every row has a
+            // readable label.
+            let label = (a["accessibilityLabel"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let name = !label.isEmpty
+                ? label
+                : (a["shotID"] as? String) ?? String(id.prefix(8))
+            pool.append(ShuffleAsset(id: id, name: name))
         }
         pool.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         return pool
