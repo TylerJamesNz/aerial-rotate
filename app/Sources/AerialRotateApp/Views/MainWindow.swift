@@ -7,23 +7,32 @@ struct MainWindow: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        VStack(spacing: 0) {
-            WallpaperWarningBanner()        // sticky top alert; renders nothing when not rotating
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    CurrentWallpaperCard()
-                    if state.progress != nil { DownloadProgressView() }
-                    Divider()
-                    CacheListView()
-                    DiskUsageRow()
-                    NextRotationView()
-                    Divider()
-                    SunMoonClock()
+        HStack(spacing: 0) {
+            // Left column: the original window, unchanged.
+            VStack(spacing: 0) {
+                WallpaperWarningBanner()    // sticky top alert; renders nothing when not rotating
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        CurrentWallpaperCard()
+                        if state.progress != nil { DownloadProgressView() }
+                        Divider()
+                        CacheListView()
+                        DiskUsageRow()
+                        NextRotationView()
+                        Divider()
+                        SunMoonClock()
+                    }
+                    .padding(24)
                 }
-                .padding(24)
             }
+            .frame(width: 460)
+
+            Divider()
+
+            // Right column: curate which aerials the daemon shuffles in.
+            ShufflePoolSidebar()
+                .frame(width: 240)
         }
-        .frame(width: 460)
         .frame(minHeight: 520)
         .onAppear { state.refresh() }
         // Live auto-refresh while the window is open: catches OS-prefetch
@@ -244,6 +253,71 @@ private struct CacheListView: View {
                 Divider()
             }
         }
+    }
+}
+
+// MARK: - 7. Shuffle-pool favourites sidebar
+
+/// Right-hand sidebar to curate which aerials the daemon shuffles in. Every
+/// shuffle-eligible aerial (the whole entries.json catalog, not just what's on
+/// disk) is a checkbox row with a preview thumbnail, plus a Select-all header.
+/// Empty favourites = shuffle everything (the Select-all default); ticking a
+/// subset narrows the pool. Each toggle writes `shuffle-favourites.json`, which
+/// the daemon reads and intersects with its pool. Reuses `AerialThumbnail` and
+/// `HoverIconButtonStyle` from the installed-catalog list.
+private struct ShufflePoolSidebar: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Shuffle pool").font(.headline)
+            Text("Tick the aerials to shuffle in. With none ticked, every aerial shuffles.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button { state.selectAllFavourites() } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: state.allFavourited ? "checkmark.square.fill" : "square")
+                        .foregroundStyle(state.allFavourited ? Color.accentColor : Color.secondary)
+                    Text("Select all (\(state.shufflePool.count))").font(.callout.weight(.medium))
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Divider()
+
+            if state.shufflePool.isEmpty {
+                Text("Catalog not readable.").foregroundStyle(.secondary).font(.callout)
+                Spacer(minLength: 0)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(state.shufflePool.enumerated()), id: \.element.id) { index, asset in
+                            Button { state.toggleFavourite(asset.id) } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: state.isFavourite(asset.id) ? "checkmark.square.fill" : "square")
+                                        .foregroundStyle(state.isFavourite(asset.id) ? Color.accentColor : Color.secondary)
+                                    AerialThumbnail(id: asset.id)
+                                    Text(asset.name).lineLimit(1).font(.callout)
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.vertical, 5)
+                                .padding(.horizontal, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(index.isMultiple(of: 2) ? Color.primary.opacity(0.05) : Color.clear)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color.primary.opacity(0.03))
     }
 }
 

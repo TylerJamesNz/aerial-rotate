@@ -6,9 +6,10 @@ A native SwiftUI agent app (`LSUIElement`, no Dock icon) that puts an
 interactive face on the `aerial-rotate` daemon. It lives in the menu bar and
 opens a window showing live rotation progress, the current wallpaper, disk
 usage, a countdown to the next rotation, a sun/moon celestial dial for
-scheduling one or more daily rotation times (shown in 12-hour AM/PM), and the
-full installed-aerial catalog. It also posts the app's own
-Notification Center banners, clicking one opens the window.
+scheduling one or more daily rotation times (shown in 12-hour AM/PM), the
+full installed-aerial catalog, and a right-hand sidebar to curate which aerials
+the daemon shuffles in. It also posts the app's own Notification Center banners,
+clicking one opens the window.
 
 ## How operators feel it
 
@@ -50,6 +51,18 @@ time both act instantly with no password prompt, then the window updates.
   Splitting timing (user agent) from privilege (root daemon) is what removed the
   old `with administrator privileges` prompt; a privileged helper (SMAppService)
   was never viable self-signed under CLT-only.
+- **The shuffle-pool sidebar is the one app-write the daemon then reads.** The
+  favourites sidebar lists the whole shuffle-eligible catalog (`ShufflePool`
+  mirrors the daemon's `entries.json` filter) as checkbox rows. Ticking a subset
+  writes `~/Library/Application Support/aerial-rotate/shuffle-favourites.json`
+  (`{ "ids": [...] }`, `FavouritesStore`), and the daemon's Python picker reads
+  it and shuffles only from the intersection. **Empty = all:** zero curated
+  favourites (the Select-all default, and the never-an-empty-pool floor) leaves
+  the daemon shuffling the whole catalog. This crosses the "reads only" stance
+  above: the app now also writes a file the daemon consumes, user-owned so still
+  password-free, and the daemon resolves the same path off the target user's
+  home (via `dscl`) rather than `$HOME` so it works under the root launchd
+  context.
 - **Build is SwiftPM + hand-assembled bundle.** No Xcode is installed (CLT
   only), so `build.sh` runs `swift build`, assembles `AerialRotate.app` around
   the binary with a hand-written `Info.plist`, and ad-hoc codesigns it
