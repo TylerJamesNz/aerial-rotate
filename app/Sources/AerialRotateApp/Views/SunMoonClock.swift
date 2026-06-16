@@ -28,7 +28,7 @@ struct SunMoonClock: View {
 
             TimelineView(.periodic(from: .now, by: 60)) { ctx in
                 CelestialDial(now: ctx.date, times: state.rotationTimes)
-                    .frame(height: 150)
+                    .frame(height: 172)
                     .frame(maxWidth: .infinity)
             }
 
@@ -159,14 +159,32 @@ private struct CelestialDial: View {
 
     var body: some View {
         Canvas { context, size in
-            let R = min(size.width / 2, size.height / 2) * 0.84
+            let R = min(size.width / 2, size.height / 2) * 0.80
             let cx = size.width / 2
             let cy = size.height / 2
             let center = CGPoint(x: cx, y: cy)
 
+            // Dark "sky" backdrop card: a rounded rect filling the canvas with a
+            // night-sky gradient. The window behind the dial is light gray, which
+            // washed out the neon arc, ticks, and captions; a dark card makes every
+            // bright element (cyan dots, white ticks, neon track) read with high
+            // contrast regardless of system light/dark mode.
+            let cardRect = CGRect(origin: .zero, size: size).insetBy(dx: 1, dy: 1)
+            let card = Path(roundedRect: cardRect, cornerRadius: 14)
+            let sky = Gradient(colors: [
+                Color(red: 0.10, green: 0.13, blue: 0.23),   // upper sky
+                Color(red: 0.05, green: 0.06, blue: 0.12),   // horizon/ground
+            ])
+            context.fill(
+                card,
+                with: .linearGradient(sky,
+                                      startPoint: CGPoint(x: cx, y: cardRect.minY),
+                                      endPoint: CGPoint(x: cx, y: cardRect.maxY)))
+            context.stroke(card, with: .color(.white.opacity(0.08)), lineWidth: 1)
+
             // Faint full ring (the night side of the cycle).
             let ring = Path(ellipseIn: CGRect(x: cx - R, y: cy - R, width: 2 * R, height: 2 * R))
-            context.stroke(ring, with: .color(.secondary.opacity(0.18)), lineWidth: 1)
+            context.stroke(ring, with: .color(.white.opacity(0.14)), lineWidth: 1)
 
             // Bright upper arc = daylight track, neon gradient left→top→right.
             var arc = Path()
@@ -182,13 +200,13 @@ private struct CelestialDial: View {
                 with: .linearGradient(neon,
                                       startPoint: CGPoint(x: cx - R, y: cy),
                                       endPoint: CGPoint(x: cx + R, y: cy)),
-                style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
 
             // Horizon line across the full width.
             var horizon = Path()
             horizon.move(to: CGPoint(x: 6, y: cy))
             horizon.addLine(to: CGPoint(x: size.width - 6, y: cy))
-            context.stroke(horizon, with: .color(.secondary.opacity(0.35)),
+            context.stroke(horizon, with: .color(.white.opacity(0.28)),
                            style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 
             // Fine tick graduations every hour around the upper arc; cardinal
@@ -202,13 +220,13 @@ private struct CelestialDial: View {
                 var tick = Path()
                 tick.move(to: inner)
                 tick.addLine(to: p)
-                context.stroke(tick, with: .color(.secondary.opacity(isCardinal ? 0.6 : 0.3)),
-                               lineWidth: isCardinal ? 1.5 : 1)
+                context.stroke(tick, with: .color(.white.opacity(isCardinal ? 0.8 : 0.45)),
+                               lineWidth: isCardinal ? 1.6 : 1)
                 if isCardinal && hour != 0 && hour != 24 {
-                    let lp = pointAt(sf, radius: R + 11, cx: cx, cy: cy)
+                    let lp = clamped(pointAt(sf, radius: R + 13, cx: cx, cy: cy), in: size, inset: 9)
                     let label = Text(Format.hour12Compact(hour))
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.9))
                     context.draw(label, at: lp)
                 }
             }
@@ -219,13 +237,13 @@ private struct CelestialDial: View {
                 let sf = (Double(t.hour) * 60 + Double(t.minute)) / 1440.0
                 let p = point(sf, R: R, cx: cx, cy: cy)
                 let up = p.y <= cy
-                let dot = Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8))
-                context.fill(dot, with: .color(up ? .cyan : .secondary.opacity(0.5)))
-                context.stroke(dot, with: .color(.white.opacity(up ? 0.9 : 0.3)), lineWidth: 1)
-                let cap = pointAt(sf, radius: R + (up ? 22 : 16), cx: cx, cy: cy)
+                let dot = Path(ellipseIn: CGRect(x: p.x - 4.5, y: p.y - 4.5, width: 9, height: 9))
+                context.fill(dot, with: .color(up ? .cyan : .white.opacity(0.45)))
+                context.stroke(dot, with: .color(.white.opacity(up ? 0.95 : 0.4)), lineWidth: 1.2)
+                let cap = clamped(pointAt(sf, radius: R + (up ? 20 : 16), cx: cx, cy: cy), in: size, inset: 9)
                 let label = Text(Format.time12Compact(t))
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(up ? Color.cyan : .secondary)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(up ? Color.cyan : .white.opacity(0.6))
                 context.draw(label, at: cap)
             }
 
@@ -259,6 +277,14 @@ private struct CelestialDial: View {
         let x = Double(cx) + Double(radius) * cos(theta)
         let y = Double(cy) - Double(radius) * sin(theta)
         return CGPoint(x: x, y: y)
+    }
+
+    /// Keep a label's draw point inside the canvas by `inset` on every edge, so
+    /// the now-larger captions (a time scheduled near noon sits at the very top,
+    /// near 06:00/18:00 at the sides) never clip the card edge.
+    private func clamped(_ p: CGPoint, in size: CGSize, inset: CGFloat) -> CGPoint {
+        CGPoint(x: min(max(p.x, inset), size.width - inset),
+                y: min(max(p.y, inset), size.height - inset))
     }
 
     private func drawBody(_ context: GraphicsContext, _ name: String, at p: CGPoint, up: Bool, color: Color) {
