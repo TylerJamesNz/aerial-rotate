@@ -127,7 +127,11 @@ struct SunMoonClock: View {
     /// Re-order the rows chronologically. Called when a slider is released, not
     /// during the drag, so the thumb under the cursor never jumps mid-scrub.
     private func sortTimes() {
-        state.rotationTimes.sort()
+        // Animate so the rows visibly slide into their new chronological slots
+        // when a drag ends, rather than snapping.
+        withAnimation(.easeInOut(duration: 0.3)) {
+            state.rotationTimes.sort()
+        }
     }
 
     private func addTime() {
@@ -160,9 +164,10 @@ struct SunMoonClock: View {
                 busy = false
                 switch result {
                 case .success:
-                    status = times.isEmpty
-                        ? "No rotations scheduled."
-                        : "Rescheduled: \(Format.timeList(times))"
+                    // No success read-out: the scheduled times are already listed
+                    // in the rows above, so echoing them here was pure duplication.
+                    // The empty-state note still earns its place.
+                    status = times.isEmpty ? "No rotations scheduled." : ""
                     state.refresh()
                 case .failure(let msg):
                     status = "Failed: \(msg)"
@@ -257,7 +262,7 @@ private struct CelestialDial: View {
 
     var body: some View {
         Canvas { context, size in
-            let R = min(size.width / 2, size.height / 2) * 0.70
+            let R = min(size.width / 2, size.height / 2) * 0.60
             let cx = size.width / 2
             let cy = size.height / 2
             let center = CGPoint(x: cx, y: cy)
@@ -341,7 +346,7 @@ private struct CelestialDial: View {
                 let dot = Path(ellipseIn: CGRect(x: p.x - 4.5, y: p.y - 4.5, width: 9, height: 9))
                 context.fill(dot, with: .color(up ? .cyan : .white.opacity(0.45)))
                 context.stroke(dot, with: .color(.white.opacity(up ? 0.95 : 0.4)), lineWidth: 1.2)
-                let cap = clamped(pointAt(sf, radius: R + (up ? 22 : 18), cx: cx, cy: cy), in: size, inset: 16)
+                let cap = clamped(pointAt(sf, radius: R + (up ? 30 : 24), cx: cx, cy: cy), in: size, inset: 16)
                 let label = Text(Format.time12(t))
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(up ? Color.cyan : .white.opacity(0.6))
