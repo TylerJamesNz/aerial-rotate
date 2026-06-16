@@ -295,44 +295,23 @@ private struct CelestialDial: View {
                                       endPoint: CGPoint(x: cx, y: cardRect.maxY)))
             context.stroke(card, with: .color(.white.opacity(0.08)), lineWidth: 1)
 
-            // The ring as a 50/50 day-and-night band, both halves cool-toned for a
-            // shimmer that turns with the dial. Sampled point by point so each half
-            // rotates and stays centred on its body: the bright day band on the sun
-            // (noon), the deeper night band on the moon (midnight).
-            let segs = 64
-            func ringArc(from startSf: Double) -> Path {
-                var path = Path()
-                for i in 0...segs {
-                    let sf = startSf + 0.5 * Double(i) / Double(segs)
-                    let p = pointAt(disp(sf), radius: R, cx: cx, cy: cy)
-                    if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
-                }
-                return path
+            // One thin, consistent ring whose colour shimmers around the radius by
+            // time of day: deep indigo at midnight, cool blue at dawn, bright ice at
+            // noon, violet at dusk. Drawn as many short segments (positions via `disp`)
+            // so the colour wheel turns with the dial and stays aligned to the sun and
+            // moon, rather than as two separate day/night bands.
+            let ringSegs = 96
+            for i in 0..<ringSegs {
+                let sf0 = Double(i) / Double(ringSegs)
+                let sf1 = Double(i + 1) / Double(ringSegs)
+                let p0 = pointAt(disp(sf0), radius: R, cx: cx, cy: cy)
+                let p1 = pointAt(disp(sf1), radius: R, cx: cx, cy: cy)
+                var seg = Path()
+                seg.move(to: p0)
+                seg.addLine(to: p1)
+                context.stroke(seg, with: .color(timeOfDayColor(sf0)),
+                               style: StrokeStyle(lineWidth: 2, lineCap: .round))
             }
-            // Night half (18:00 -> 30:00): cool indigo/periwinkle/violet, dimmer.
-            let nightGrad = Gradient(colors: [
-                Color(red: 0.28, green: 0.34, blue: 0.70).opacity(0.85),
-                Color(red: 0.42, green: 0.50, blue: 0.92).opacity(0.90),
-                Color(red: 0.50, green: 0.40, blue: 0.82).opacity(0.85),
-            ])
-            context.stroke(
-                ringArc(from: 0.75),
-                with: .linearGradient(nightGrad,
-                                      startPoint: CGPoint(x: cx - R, y: cy),
-                                      endPoint: CGPoint(x: cx + R, y: cy)),
-                style: StrokeStyle(lineWidth: 3, lineCap: .round))
-            // Day half (06:00 -> 18:00): brighter cool cyan/ice/blue.
-            let dayGrad = Gradient(colors: [
-                Color(red: 0.20, green: 0.75, blue: 0.92),   // dawn (teal)
-                Color(red: 0.72, green: 0.97, blue: 1.00),   // noon (ice)
-                Color(red: 0.38, green: 0.62, blue: 0.98),   // dusk (blue)
-            ])
-            context.stroke(
-                ringArc(from: 0.25),
-                with: .linearGradient(dayGrad,
-                                      startPoint: CGPoint(x: cx - R, y: cy),
-                                      endPoint: CGPoint(x: cx + R, y: cy)),
-                style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
 
             // Faint hour graduations the whole way round so the gaps between slots are
             // easy to read; the 6-hour cardinals are a touch taller. No hour labels:
@@ -367,11 +346,15 @@ private struct CelestialDial: View {
                 context.draw(label, at: cap)
             }
 
-            // Moon rides at midnight, half a ring from the sun, climbing to the top at
-            // midnight; lit with a glow in the upper half, dimmed in the lower. (The
-            // sun is drawn last, below, so it sits in the foreground.)
+            // Sun rides at noon, moon at midnight, half a ring apart and on the same
+            // layer; each climbs to the top at its hour, lit with a glow in the upper
+            // half, dimmed in the lower. The sun is the larger body but no longer
+            // floats above everything.
+            let sun = pointAt(disp(0.5), radius: R, cx: cx, cy: cy)
             let moon = pointAt(disp(0.0), radius: R, cx: cx, cy: cy)
             drawBody(context, "moon.fill", at: moon, up: moon.y <= cy, color: Color(white: 0.92), glow: .white)
+            drawBody(context, "sun.max.fill", at: sun, up: sun.y <= cy,
+                     color: .orange, glow: .orange, glyph: 30, haloR: 26)
 
             // The single kept hour label: "12 PM" riding just inside the ring with the
             // sun, the one absolute anchor on an otherwise relative dial.
@@ -395,13 +378,31 @@ private struct CelestialDial: View {
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                 .foregroundStyle(.white)
             context.draw(nowText, at: CGPoint(x: cx, y: cy - R - 19))
-
-            // The sun rides at noon and is painted last, so it sits in the foreground:
-            // big and bright, with a strong warm halo, climbing to the top at midday.
-            let sun = pointAt(disp(0.5), radius: R, cx: cx, cy: cy)
-            drawBody(context, "sun.max.fill", at: sun, up: sun.y <= cy,
-                     color: .orange, glow: .orange, glyph: 30, haloR: 26)
         }
+    }
+
+    // MARK: - colour
+
+    /// A cool "time of day" colour for a clock fraction (0 and 1 = midnight, 0.5 =
+    /// noon): deep indigo at midnight, cool blue at dawn, bright ice at noon, violet
+    /// at dusk. Used to shimmer the ring around its radius and read day vs night.
+    private func timeOfDayColor(_ sf: Double) -> Color {
+        let stops: [(at: Double, rgb: (Double, Double, Double))] = [
+            (0.00, (0.20, 0.22, 0.45)),   // midnight indigo
+            (0.25, (0.25, 0.55, 0.82)),   // dawn blue
+            (0.50, (0.68, 0.95, 1.00)),   // noon ice
+            (0.75, (0.48, 0.40, 0.82)),   // dusk violet
+            (1.00, (0.20, 0.22, 0.45)),   // midnight indigo
+        ]
+        let f = sf - floor(sf)
+        var lo = stops[0], hi = stops[stops.count - 1]
+        for i in 0..<(stops.count - 1) where f >= stops[i].at && f <= stops[i + 1].at {
+            lo = stops[i]; hi = stops[i + 1]; break
+        }
+        let t = (f - lo.at) / max(hi.at - lo.at, 0.0001)
+        return Color(red: lo.rgb.0 + (hi.rgb.0 - lo.rgb.0) * t,
+                     green: lo.rgb.1 + (hi.rgb.1 - lo.rgb.1) * t,
+                     blue: lo.rgb.2 + (hi.rgb.2 - lo.rgb.2) * t)
     }
 
     // MARK: - geometry
