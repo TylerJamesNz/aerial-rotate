@@ -94,11 +94,12 @@ private struct DiskUsageRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Disk usage").font(.headline)
-            HStack(spacing: 24) {
+            HStack(spacing: 12) {
                 metric("Cache total", Format.bytes(state.snapshot.totalBytes))
                 metric("Current file", Format.bytes(state.snapshot.currentBytes))
                 metric("On disk", "\(state.snapshot.items.count) aerial\(state.snapshot.items.count == 1 ? "" : "s")")
             }
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -107,6 +108,9 @@ private struct DiskUsageRow: View {
             Text(value).font(.title3).monospacedDigit()
             Text(label).font(.caption).foregroundStyle(.secondary)
         }
+        // Each metric takes an equal share of the row so the three always span
+        // the column evenly (flexbox-style), regardless of value width.
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -239,7 +243,6 @@ private struct CacheListView: View {
                     .background(index.isMultiple(of: 2) ? Color.primary.opacity(0.05) : Color.clear)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
     }
 }

@@ -58,7 +58,6 @@ struct SunMoonClock: View {
                     .background(index.isMultiple(of: 2) ? Color.primary.opacity(0.05) : Color.clear)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 6))
 
             HStack {
                 Button { addTime() } label: { Label("Add time", systemImage: "plus.circle.fill") }
