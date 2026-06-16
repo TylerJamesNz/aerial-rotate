@@ -206,7 +206,10 @@ private struct TimeSlider: View {
                     base.addLine(to: CGPoint(x: size.width - hPad, y: notchY))
                     ctx.stroke(base, with: .color(.white.opacity(0.20)), lineWidth: 1)
 
-                    for h in 0..<24 {
+                    // 0...24 so the day is bookended: a "12 AM" cardinal line at the
+                    // far left (00:00) and a matching one at the far right (24:00, the
+                    // next midnight), instead of the track trailing off after 11 PM.
+                    for h in 0...24 {
                         let x = hPad + CGFloat(h) / 24.0 * span
                         let key = h % 6 == 0
                         let half: CGFloat = key ? 8 : 4
@@ -216,7 +219,7 @@ private struct TimeSlider: View {
                         ctx.stroke(tick, with: .color(.white.opacity(key ? 0.9 : 0.45)),
                                    lineWidth: key ? 1.5 : 1)
                         if key {
-                            let label = Text(hourLabel(h))
+                            let label = Text(hourLabel(h == 24 ? 0 : h))
                                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(.white.opacity(0.7))
                             ctx.draw(label, at: CGPoint(x: x, y: notchY + half + 9))
@@ -292,28 +295,41 @@ private struct CelestialDial: View {
                                       endPoint: CGPoint(x: cx, y: cardRect.maxY)))
             context.stroke(card, with: .color(.white.opacity(0.08)), lineWidth: 1)
 
-            // Faint full ring.
-            let ring = Path(ellipseIn: CGRect(x: cx - R, y: cy - R, width: 2 * R, height: 2 * R))
-            context.stroke(ring, with: .color(.white.opacity(0.16)), lineWidth: 1)
-
-            // Daylight band: the 06:00 -> 18:00 half of the ring, sampled point by
-            // point so it rotates with everything else and stays centred on the sun
-            // (noon). Neon gradient, dawn on the left through dusk on the right.
-            var arc = Path()
+            // The ring as a 50/50 day-and-night band, both halves cool-toned for a
+            // shimmer that turns with the dial. Sampled point by point so each half
+            // rotates and stays centred on its body: the bright day band on the sun
+            // (noon), the deeper night band on the moon (midnight).
             let segs = 64
-            for i in 0...segs {
-                let sf = 0.25 + 0.5 * Double(i) / Double(segs)   // 06:00 .. 18:00
-                let p = pointAt(disp(sf), radius: R, cx: cx, cy: cy)
-                if i == 0 { arc.move(to: p) } else { arc.addLine(to: p) }
+            func ringArc(from startSf: Double) -> Path {
+                var path = Path()
+                for i in 0...segs {
+                    let sf = startSf + 0.5 * Double(i) / Double(segs)
+                    let p = pointAt(disp(sf), radius: R, cx: cx, cy: cy)
+                    if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+                }
+                return path
             }
-            let neon = Gradient(colors: [
-                Color(red: 0.20, green: 0.55, blue: 0.95),   // dawn
-                Color(red: 0.65, green: 0.95, blue: 1.00),   // noon
-                Color(red: 0.55, green: 0.35, blue: 0.95),   // dusk
+            // Night half (18:00 -> 30:00): cool indigo/periwinkle/violet, dimmer.
+            let nightGrad = Gradient(colors: [
+                Color(red: 0.28, green: 0.34, blue: 0.70).opacity(0.85),
+                Color(red: 0.42, green: 0.50, blue: 0.92).opacity(0.90),
+                Color(red: 0.50, green: 0.40, blue: 0.82).opacity(0.85),
             ])
             context.stroke(
-                arc,
-                with: .linearGradient(neon,
+                ringArc(from: 0.75),
+                with: .linearGradient(nightGrad,
+                                      startPoint: CGPoint(x: cx - R, y: cy),
+                                      endPoint: CGPoint(x: cx + R, y: cy)),
+                style: StrokeStyle(lineWidth: 3, lineCap: .round))
+            // Day half (06:00 -> 18:00): brighter cool cyan/ice/blue.
+            let dayGrad = Gradient(colors: [
+                Color(red: 0.20, green: 0.75, blue: 0.92),   // dawn (teal)
+                Color(red: 0.72, green: 0.97, blue: 1.00),   // noon (ice)
+                Color(red: 0.38, green: 0.62, blue: 0.98),   // dusk (blue)
+            ])
+            context.stroke(
+                ringArc(from: 0.25),
+                with: .linearGradient(dayGrad,
                                       startPoint: CGPoint(x: cx - R, y: cy),
                                       endPoint: CGPoint(x: cx + R, y: cy)),
                 style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
@@ -351,12 +367,10 @@ private struct CelestialDial: View {
                 context.draw(label, at: cap)
             }
 
-            // Sun rides at noon, moon at midnight, half a ring apart; both rotate with
-            // everything, so the sun climbs to the top at midday and the moon at
-            // midnight. The body in the upper half is lit with a glow, the other dimmed.
-            let sun = pointAt(disp(0.5), radius: R, cx: cx, cy: cy)
+            // Moon rides at midnight, half a ring from the sun, climbing to the top at
+            // midnight; lit with a glow in the upper half, dimmed in the lower. (The
+            // sun is drawn last, below, so it sits in the foreground.)
             let moon = pointAt(disp(0.0), radius: R, cx: cx, cy: cy)
-            drawBody(context, "sun.max.fill", at: sun, up: sun.y <= cy, color: .orange, glow: .orange)
             drawBody(context, "moon.fill", at: moon, up: moon.y <= cy, color: Color(white: 0.92), glow: .white)
 
             // The single kept hour label: "12 PM" riding just inside the ring with the
@@ -381,6 +395,12 @@ private struct CelestialDial: View {
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                 .foregroundStyle(.white)
             context.draw(nowText, at: CGPoint(x: cx, y: cy - R - 19))
+
+            // The sun rides at noon and is painted last, so it sits in the foreground:
+            // big and bright, with a strong warm halo, climbing to the top at midday.
+            let sun = pointAt(disp(0.5), radius: R, cx: cx, cy: cy)
+            drawBody(context, "sun.max.fill", at: sun, up: sun.y <= cy,
+                     color: .orange, glow: .orange, glyph: 30, haloR: 26)
         }
     }
 
@@ -407,20 +427,23 @@ private struct CelestialDial: View {
                 y: min(max(p.y, inset), size.height - inset))
     }
 
-    private func drawBody(_ context: GraphicsContext, _ name: String, at p: CGPoint, up: Bool, color: Color, glow: Color) {
+    private func drawBody(_ context: GraphicsContext, _ name: String, at p: CGPoint, up: Bool,
+                          color: Color, glow: Color, glyph: CGFloat = 18, haloR: CGFloat = 16) {
         if up {
             // Soft radial halo so the body pops off the dark sky: bright at the
             // centre, fading to nothing at the rim. The moon uses a white glow so
             // it stands out as much as the sun's warm one.
-            let r: CGFloat = 16
-            let halo = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
+            let halo = Path(ellipseIn: CGRect(x: p.x - haloR, y: p.y - haloR, width: 2 * haloR, height: 2 * haloR))
             context.fill(halo, with: .radialGradient(
-                Gradient(colors: [glow.opacity(0.6), glow.opacity(0)]),
-                center: p, startRadius: 0, endRadius: r))
+                Gradient(colors: [glow.opacity(0.7), glow.opacity(0)]),
+                center: p, startRadius: 0, endRadius: haloR))
         }
         let image = Image(systemName: name)
         var resolved = context.resolve(image)
-        resolved.shading = .color(up ? color : color.opacity(0.35))
-        context.draw(resolved, at: p)
+        resolved.shading = .color(up ? color : color.opacity(0.4))
+        // Draw into an explicit rect so the glyph can be scaled up (the foreground
+        // sun is larger than the moon).
+        let rect = CGRect(x: p.x - glyph / 2, y: p.y - glyph / 2, width: glyph, height: glyph)
+        context.draw(resolved, in: rect)
     }
 }
