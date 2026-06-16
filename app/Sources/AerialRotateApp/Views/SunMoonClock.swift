@@ -28,7 +28,7 @@ struct SunMoonClock: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Rotation times").font(.headline)
 
-            TimelineView(.periodic(from: .now, by: 60)) { ctx in
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 CelestialDial(now: ctx.date, times: state.rotationTimes)
                     .frame(height: 196)
                     .frame(maxWidth: .infinity)
@@ -53,7 +53,7 @@ struct SunMoonClock: View {
                         Button(role: .destructive) { remove(rt) } label: {
                             Image(systemName: "minus.circle.fill")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(HoverIconButtonStyle())
                         .foregroundStyle(.red)
                         .help("Remove this time")
                     }
@@ -78,7 +78,7 @@ struct SunMoonClock: View {
                         Image(systemName: "plus.circle.fill")
                     }
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(SoftButtonStyle())
                 .help("Add a time")
             }
             .padding(.horizontal, 8)
@@ -253,35 +253,41 @@ private struct TimeSlider: View {
     }
 }
 
-/// The live rotating clock. The whole ring is offset so the current time is pinned
-/// to a bold white notch at the very top; everything else rides the ring and turns
-/// past that notch as the day advances. The sun sits at noon and the moon at
-/// midnight (half a ring apart), so each climbs to the top at its hour, the body in
-/// the upper half lit, the other dimmed. A neon band marks the daylight half, a dot
-/// per scheduled time sits at its offset from now, and "12 PM" is the one kept
-/// label, riding with the sun. `now` advances via the parent's `TimelineView`, so
-/// the ring glides without manual refresh.
+/// The live timeline. A solid horizontal line runs left (past) to right (future)
+/// with "now" pinned to a bold white notch at the centre and the current time read
+/// just above it. The sun (noon), the moon (midnight), and a dot per scheduled time
+/// ride the line at their offset from now, so as the day advances everything streams
+/// from right to left past the centre. The line's colour shimmers by time of day.
+/// A line is far easier to read and to place times on than the old circular dial.
+/// `now` advances via the parent's `TimelineView`, so it glides without manual refresh.
 private struct CelestialDial: View {
     let now: Date
     let times: [RotationTime]
 
     var body: some View {
         Canvas { context, size in
-            let R = min(size.width / 2, size.height / 2) * 0.60
             let cx = size.width / 2
             let cy = size.height / 2
-
+            let usable = size.width      // the line runs edge to edge
+            let lineY = cy + 14          // the timeline sits just below centre
+            let bodyY = cy - 12          // sun/moon ride above the line
             let nowFrac = fractionOfDay(now)
-            // Rotate the whole dial so the current time is pinned to the top. A clock
-            // fraction `sf` (0 = midnight, 0.5 = noon) is mapped through `disp` before
-            // being turned into a ring point, and `disp(nowFrac)` lands at 0.5, which
-            // `pointAt` draws at the very top. Everything that rides the ring (sun,
-            // moon, scheduled dots, the 12 PM anchor) rotates together as the day
-            // turns; only the bold "now" notch is painted at a fixed top.
-            func disp(_ sf: Double) -> Double { sf - nowFrac + 0.5 }
 
-            // Dark "sky" backdrop card so the bright ring elements read against the
-            // window's light gray, regardless of system light/dark mode.
+            // Map a clock fraction `sf` (0 = midnight, 0.5 = noon) to an x on the line.
+            // The signed offset from now is wrapped to [-0.5, 0.5] (half a day either
+            // side), so `sf == nowFrac` lands dead centre, +0.5 at the right edge (12h
+            // ahead) and -0.5 at the left (12h behind). As `now` advances, every
+            // element's offset shrinks then goes negative: it streams right to left
+            // past the centre.
+            func offset(_ sf: Double) -> Double {
+                var o = sf - nowFrac
+                o -= o.rounded()
+                return o
+            }
+            func xFor(_ sf: Double) -> CGFloat { cx + CGFloat(offset(sf)) * usable }
+
+            // Dark "sky" backdrop card with rounded corners so the bright line
+            // elements read against the window's light gray, in either appearance.
             let cardRect = CGRect(origin: .zero, size: size).insetBy(dx: 1, dy: 1)
             let card = Path(roundedRect: cardRect, cornerRadius: 14)
             let sky = Gradient(colors: [
@@ -295,93 +301,83 @@ private struct CelestialDial: View {
                                       endPoint: CGPoint(x: cx, y: cardRect.maxY)))
             context.stroke(card, with: .color(.white.opacity(0.08)), lineWidth: 1)
 
-            // One thin, consistent ring whose colour shimmers around the radius by
-            // time of day: deep indigo at midnight, cool blue at dawn, bright ice at
-            // noon, violet at dusk. Drawn as many short segments (positions via `disp`)
-            // so the colour wheel turns with the dial and stays aligned to the sun and
-            // moon, rather than as two separate day/night bands.
-            let ringSegs = 96
-            for i in 0..<ringSegs {
-                let sf0 = Double(i) / Double(ringSegs)
-                let sf1 = Double(i + 1) / Double(ringSegs)
-                let p0 = pointAt(disp(sf0), radius: R, cx: cx, cy: cy)
-                let p1 = pointAt(disp(sf1), radius: R, cx: cx, cy: cy)
+            // The timeline itself: short segments across the usable width, each tinted
+            // by the time of day at that point, so the colour streams with the line
+            // (indigo midnight -> blue dawn -> ice noon -> violet dusk).
+            let segs = 120
+            for i in 0..<segs {
+                let o0 = Double(i) / Double(segs) - 0.5
+                let o1 = Double(i + 1) / Double(segs) - 0.5
+                let x0 = cx + CGFloat(o0) * usable
+                let x1 = cx + CGFloat(o1) * usable
                 var seg = Path()
-                seg.move(to: p0)
-                seg.addLine(to: p1)
-                context.stroke(seg, with: .color(timeOfDayColor(sf0)),
-                               style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                seg.move(to: CGPoint(x: x0, y: lineY))
+                seg.addLine(to: CGPoint(x: x1, y: lineY))
+                context.stroke(seg, with: .color(timeOfDayColor(nowFrac + o0)),
+                               style: StrokeStyle(lineWidth: 3, lineCap: .round))
             }
 
-            // Faint hour graduations the whole way round so the gaps between slots are
-            // easy to read; the 6-hour cardinals are a touch taller. No hour labels:
-            // the sun marks noon, the moon midnight, the bold notch the top is now.
+            // Faint hour graduations along the line; the 6-hour cardinals taller.
             for hour in 0..<24 {
                 let sf = Double(hour) / 24.0
+                let x = xFor(sf)
                 let cardinal = hour % 6 == 0
-                let outer = pointAt(disp(sf), radius: R, cx: cx, cy: cy)
-                let inner = pointAt(disp(sf), radius: R - (cardinal ? 7 : 4), cx: cx, cy: cy)
+                let half: CGFloat = cardinal ? 7 : 4
                 var tick = Path()
-                tick.move(to: inner)
-                tick.addLine(to: outer)
+                tick.move(to: CGPoint(x: x, y: lineY - half))
+                tick.addLine(to: CGPoint(x: x, y: lineY + half))
                 context.stroke(tick, with: .color(.white.opacity(cardinal ? 0.5 : 0.22)),
                                lineWidth: cardinal ? 1.4 : 1)
             }
 
-            // Scheduled-time notches ride the ring at their offset from now: a glowing
-            // dot per time, brighter on the half nearer "now" (the upper half), each
-            // with a caption just outside the ring.
+            // Scheduled-time dots ride the line at their offset from now, brighter the
+            // nearer they are to "now" (the centre), each captioned just below.
             for t in times {
                 let sf = (Double(t.hour) * 60 + Double(t.minute)) / 1440.0
-                let d = disp(sf)
-                let p = pointAt(d, radius: R, cx: cx, cy: cy)
-                let up = p.y <= cy
-                let dot = Path(ellipseIn: CGRect(x: p.x - 4.5, y: p.y - 4.5, width: 9, height: 9))
-                context.fill(dot, with: .color(up ? .cyan : .cyan.opacity(0.5)))
-                context.stroke(dot, with: .color(.white.opacity(up ? 0.95 : 0.5)), lineWidth: 1.2)
-                let cap = clamped(pointAt(d, radius: R + 20, cx: cx, cy: cy), in: size, inset: 16)
+                let x = xFor(sf)
+                let near = abs(offset(sf)) <= 0.25
+                let dot = Path(ellipseIn: CGRect(x: x - 4.5, y: lineY - 4.5, width: 9, height: 9))
+                context.fill(dot, with: .color(near ? .cyan : .cyan.opacity(0.5)))
+                context.stroke(dot, with: .color(.white.opacity(near ? 0.95 : 0.5)), lineWidth: 1.2)
+                let cap = CGPoint(x: min(max(x, 18), size.width - 18), y: lineY + 18)
                 let label = Text(Format.time12(t))
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(up ? Color.cyan : .white.opacity(0.65))
+                    .foregroundStyle(near ? Color.cyan : .white.opacity(0.65))
                 context.draw(label, at: cap)
             }
 
-            // Sun rides at noon, moon at midnight, half a ring apart and on the same
-            // layer; each climbs to the top at its hour, lit with a glow in the upper
-            // half, dimmed in the lower. The sun is the larger body but no longer
-            // floats above everything.
-            let sun = pointAt(disp(0.5), radius: R, cx: cx, cy: cy)
-            let moon = pointAt(disp(0.0), radius: R, cx: cx, cy: cy)
-            drawBody(context, "moon.fill", at: moon, up: moon.y <= cy, color: Color(white: 0.92), glow: .white)
-            // The sun is always lit (never dimmed below the horizon) so it stays a
-            // solid, foreground body rather than a faint shape behind the ring.
-            drawBody(context, "sun.max.fill", at: sun, up: sun.y <= cy,
-                     color: .orange, glow: .orange, glyph: 30, haloR: 26, alwaysLit: true)
+            // Sun rides at noon, moon at midnight, floating just above the line; each
+            // is lit (with a glow) while within half a day of now, dimmed otherwise.
+            // The sun is always lit so it stays a solid foreground body.
+            let moonLit = abs(offset(0.0)) <= 0.25
+            drawBody(context, "moon.fill", at: CGPoint(x: xFor(0.0), y: bodyY),
+                     up: moonLit, color: Color(white: 0.92), glow: .white)
+            drawBody(context, "sun.max.fill", at: CGPoint(x: xFor(0.5), y: bodyY),
+                     up: true, color: .orange, glow: .orange, glyph: 30, haloR: 26, alwaysLit: true)
 
-            // The single kept hour label: "12 PM" riding just inside the ring with the
-            // sun, the one absolute anchor on an otherwise relative dial.
-            let noonLabelP = clamped(pointAt(disp(0.5), radius: R - 18, cx: cx, cy: cy), in: size, inset: 14)
-            let noonLabel = Text("12 PM")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.8))
-            context.draw(noonLabel, at: noonLabelP)
-
-            // The fixed "now" marker: a bold white notch at the very top with a soft
-            // glow, and the current time spelled out above it. Everything else slides
-            // past this; it never moves.
+            // The fixed "now" marker: a bold white notch through the centre of the
+            // line, the current time (ticking with seconds) read just above it, and a
+            // sky icon above that which cuts between night, sunrise, day and sunset as
+            // the hours pass. Everything else streams past this; it never moves.
             var nowTick = Path()
-            nowTick.move(to: CGPoint(x: cx, y: cy - R - 7))
-            nowTick.addLine(to: CGPoint(x: cx, y: cy - R + 11))
+            nowTick.move(to: CGPoint(x: cx, y: lineY - 13))
+            nowTick.addLine(to: CGPoint(x: cx, y: lineY + 13))
             context.stroke(nowTick, with: .color(.white.opacity(0.35)), lineWidth: 6)
             context.stroke(nowTick, with: .color(.white), lineWidth: 2.5)
-            let nowComps = Calendar.current.dateComponents([.hour, .minute], from: now)
-            let nowRT = RotationTime(hour: nowComps.hour ?? 0, minute: nowComps.minute ?? 0)
-            // Current time spelled out in the centre of the circle (the top notch
-            // marks where "now" sits on the ring; this is the readout).
-            let nowText = Text(Format.time12(nowRT))
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+
+            let nowText = Text(timeWithSeconds(now))
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.white)
-            context.draw(nowText, at: CGPoint(x: cx, y: cy))
+            context.draw(nowText, at: CGPoint(x: cx, y: lineY - 26))
+
+            // Sky icon above the time, picked from the current hour so it cuts over
+            // through the day: night moon, sunrise, daytime sun, sunset.
+            let (iconName, iconColor) = skyIcon(nowFrac)
+            var skyGlyph = context.resolve(Image(systemName: iconName))
+            skyGlyph.shading = .color(iconColor)
+            let glyph: CGFloat = 22
+            context.draw(skyGlyph, in: CGRect(x: cx - glyph / 2, y: lineY - 48 - glyph / 2,
+                                              width: glyph, height: glyph))
         }
     }
 
@@ -417,19 +413,25 @@ private struct CelestialDial: View {
         return Double((c.hour ?? 0) * 60 + (c.minute ?? 0)) / 1440.0
     }
 
-    private func pointAt(_ sf: Double, radius: CGFloat, cx: CGFloat, cy: CGFloat) -> CGPoint {
-        let theta = (3 * Double.pi / 2) - 2 * Double.pi * sf
-        let x = Double(cx) + Double(radius) * cos(theta)
-        let y = Double(cy) - Double(radius) * sin(theta)
-        return CGPoint(x: x, y: y)
+    /// Current time as "h:mm:ss AM/PM" so the readout visibly ticks every second.
+    private func timeWithSeconds(_ date: Date) -> String {
+        let c = Calendar.current.dateComponents([.hour, .minute, .second], from: date)
+        let h24 = c.hour ?? 0
+        var h = h24 % 12
+        if h == 0 { h = 12 }
+        return String(format: "%d:%02d:%02d %@", h, c.minute ?? 0, c.second ?? 0,
+                      h24 < 12 ? "AM" : "PM")
     }
 
-    /// Keep a label's draw point inside the canvas by `inset` on every edge, so
-    /// the now-larger captions (a time scheduled near noon sits at the very top,
-    /// near 06:00/18:00 at the sides) never clip the card edge.
-    private func clamped(_ p: CGPoint, in size: CGSize, inset: CGFloat) -> CGPoint {
-        CGPoint(x: min(max(p.x, inset), size.width - inset),
-                y: min(max(p.y, inset), size.height - inset))
+    /// The sky icon for the current time of day, cutting between night, sunrise,
+    /// daytime and sunset as the hours pass (`f` is the day fraction, 0.5 = noon).
+    private func skyIcon(_ f: Double) -> (String, Color) {
+        switch f {
+        case 0.25..<0.29: return ("sunrise.fill", .orange)              // ~06:00–07:00
+        case 0.29..<0.71: return ("sun.max.fill", .orange)             // ~07:00–17:00
+        case 0.71..<0.79: return ("sunset.fill", .orange)              // ~17:00–19:00
+        default:          return ("moon.stars.fill", Color(white: 0.92)) // night
+        }
     }
 
     private func drawBody(_ context: GraphicsContext, _ name: String, at p: CGPoint, up: Bool,
