@@ -13,13 +13,14 @@ struct MainWindow: View {
                 VStack(alignment: .leading, spacing: 20) {
                     CurrentWallpaperCard()
                     if state.progress != nil { DownloadProgressView() }
+                    Divider()
+                    CacheListView()
+                    Divider()
                     DiskUsageRow()
                     NextRotationView()
                     RotateNowButton()
                     Divider()
                     SunMoonClock()
-                    Divider()
-                    CacheListView()
                 }
                 .padding(24)
             }
@@ -234,6 +235,15 @@ private struct CacheListView: View {
                     Spacer()
                     Text(Format.bytes(item.sizeBytes))
                         .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    if let url = WallpaperStore.movURL(for: item.id) {
+                        Button {
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        } label: {
+                            Image(systemName: "folder")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Reveal in Finder")
+                    }
                 }
                 .padding(.vertical, 2)
                 Divider()
