@@ -28,10 +28,9 @@ struct SunMoonClock: View {
 
             TimelineView(.periodic(from: .now, by: 60)) { ctx in
                 CelestialDial(now: ctx.date, times: state.rotationTimes)
-                    .frame(height: 172)
+                    .frame(height: 196)
                     .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 10)
 
             VStack(spacing: 0) {
                 ForEach(Array(state.rotationTimes.enumerated()), id: \.element.id) { index, rt in
@@ -174,7 +173,7 @@ private struct CelestialDial: View {
 
     var body: some View {
         Canvas { context, size in
-            let R = min(size.width / 2, size.height / 2) * 0.80
+            let R = min(size.width / 2, size.height / 2) * 0.70
             let cx = size.width / 2
             let cy = size.height / 2
             let center = CGPoint(x: cx, y: cy)
@@ -225,7 +224,7 @@ private struct CelestialDial: View {
                            style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 
             // Fine tick graduations every hour around the upper arc; cardinal
-            // hours get monospaced 12-hour labels (6a / 12p / 6p on the track).
+            // hours get full 12-hour labels (6 AM / 12 PM / 6 PM on the track).
             for hour in stride(from: 0, through: 24, by: 1) {
                 let sf = Double(hour) / 24.0
                 let p = point(sf, R: R, cx: cx, cy: cy)
@@ -238,8 +237,8 @@ private struct CelestialDial: View {
                 context.stroke(tick, with: .color(.white.opacity(isCardinal ? 0.8 : 0.45)),
                                lineWidth: isCardinal ? 1.6 : 1)
                 if isCardinal && hour != 0 && hour != 24 {
-                    let lp = clamped(pointAt(sf, radius: R + 13, cx: cx, cy: cy), in: size, inset: 9)
-                    let label = Text(Format.hour12Compact(hour))
+                    let lp = clamped(pointAt(sf, radius: R + 26, cx: cx, cy: cy), in: size, inset: 14)
+                    let label = Text(Format.hour12(hour))
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.9))
                     context.draw(label, at: lp)
@@ -255,8 +254,8 @@ private struct CelestialDial: View {
                 let dot = Path(ellipseIn: CGRect(x: p.x - 4.5, y: p.y - 4.5, width: 9, height: 9))
                 context.fill(dot, with: .color(up ? .cyan : .white.opacity(0.45)))
                 context.stroke(dot, with: .color(.white.opacity(up ? 0.95 : 0.4)), lineWidth: 1.2)
-                let cap = clamped(pointAt(sf, radius: R + (up ? 20 : 16), cx: cx, cy: cy), in: size, inset: 9)
-                let label = Text(Format.time12Compact(t))
+                let cap = clamped(pointAt(sf, radius: R + (up ? 22 : 18), cx: cx, cy: cy), in: size, inset: 16)
+                let label = Text(Format.time12(t))
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(up ? Color.cyan : .white.opacity(0.6))
                 context.draw(label, at: cap)
@@ -267,8 +266,8 @@ private struct CelestialDial: View {
             let dayFraction = fractionOfDay(now)
             let sun = point(dayFraction, R: R, cx: cx, cy: cy)
             let moon = point((dayFraction + 0.5).truncatingRemainder(dividingBy: 1), R: R, cx: cx, cy: cy)
-            drawBody(context, "sun.max.fill", at: sun, up: sun.y <= cy, color: .orange)
-            drawBody(context, "moon.fill", at: moon, up: moon.y <= cy, color: .indigo)
+            drawBody(context, "sun.max.fill", at: sun, up: sun.y <= cy, color: .orange, glow: .orange)
+            drawBody(context, "moon.fill", at: moon, up: moon.y <= cy, color: Color(white: 0.92), glow: .white)
         }
     }
 
@@ -302,11 +301,16 @@ private struct CelestialDial: View {
                 y: min(max(p.y, inset), size.height - inset))
     }
 
-    private func drawBody(_ context: GraphicsContext, _ name: String, at p: CGPoint, up: Bool, color: Color) {
+    private func drawBody(_ context: GraphicsContext, _ name: String, at p: CGPoint, up: Bool, color: Color, glow: Color) {
         if up {
-            // soft glow halo
-            let glow = Path(ellipseIn: CGRect(x: p.x - 13, y: p.y - 13, width: 26, height: 26))
-            context.fill(glow, with: .color(color.opacity(0.22)))
+            // Soft radial halo so the body pops off the dark sky: bright at the
+            // centre, fading to nothing at the rim. The moon uses a white glow so
+            // it stands out as much as the sun's warm one.
+            let r: CGFloat = 16
+            let halo = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
+            context.fill(halo, with: .radialGradient(
+                Gradient(colors: [glow.opacity(0.6), glow.opacity(0)]),
+                center: p, startRadius: 0, endRadius: r))
         }
         let image = Image(systemName: name)
         var resolved = context.resolve(image)

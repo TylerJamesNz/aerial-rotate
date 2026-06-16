@@ -15,7 +15,6 @@ struct MainWindow: View {
                     if state.progress != nil { DownloadProgressView() }
                     Divider()
                     CacheListView()
-                    Divider()
                     DiskUsageRow()
                     NextRotationView()
                     Divider()
@@ -242,6 +241,7 @@ private struct CacheListView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(index.isMultiple(of: 2) ? Color.primary.opacity(0.05) : Color.clear)
                 }
+                Divider()
             }
         }
     }
@@ -382,19 +382,11 @@ enum Format {
         return String(format: "%d:%02d %@", h, t.minute, am ? "AM" : "PM")
     }
 
-    /// Compact 12-hour "8:00a" for tight dial captions where AM/PM must fit a
-    /// 9pt monospaced label.
-    static func time12Compact(_ t: RotationTime) -> String {
-        let am = t.hour < 12
-        let h = t.hour % 12 == 0 ? 12 : t.hour % 12
-        return String(format: "%d:%02d%@", h, t.minute, am ? "a" : "p")
-    }
-
-    /// Compact 12-hour hour-only "6a" / "12p" for the dial's hour graduations.
-    static func hour12Compact(_ hour: Int) -> String {
+    /// Full 12-hour hour-only "6 AM" / "12 PM" for the dial's cardinal labels.
+    static func hour12(_ hour: Int) -> String {
         let am = hour < 12
         let h = hour % 12 == 0 ? 12 : hour % 12
-        return "\(h)\(am ? "a" : "p")"
+        return "\(h) \(am ? "AM" : "PM")"
     }
 
     /// "8:00 AM, 12:00 PM, 6:30 PM" for the schedule label (sorted).
