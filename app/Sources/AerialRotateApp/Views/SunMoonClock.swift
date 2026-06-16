@@ -164,8 +164,13 @@ struct SunMoonClock: View {
     }
 
     private func addTime() {
-        // Default to the next round hour so a fresh row is rarely a duplicate.
-        let h = ((Calendar.current.component(.hour, from: Date())) + 1) % 24
+        // Start at the next round hour, then walk forward to the first hour with
+        // no existing :00 slot, so a fresh row never lands on a duplicate and
+        // silently collapses. The operator drags it to the time they actually
+        // want; this only guarantees it appears.
+        let start = ((Calendar.current.component(.hour, from: Date())) + 1) % 24
+        let taken = Set(state.rotationTimes.filter { $0.minute == 0 }.map(\.hour))
+        let h = (0..<24).map { (start + $0) % 24 }.first { !taken.contains($0) } ?? start
         state.rotationTimes.append(RotationTime(hour: h, minute: 0))
     }
 
