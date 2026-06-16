@@ -190,9 +190,9 @@ private struct TimeSlider: View {
     private let step = 15.0
     private let notchY: CGFloat = 11
     private let thumbR: CGFloat = 7
-    /// Horizontal breathing room so the end notches' centred labels ("12a" at the
-    /// far left, the last cardinal near the right) don't clip the track edge.
-    private let hPad: CGFloat = 16
+    /// Horizontal breathing room so the end notches' centred labels ("12 AM" at
+    /// the far left, the last cardinal near the right) don't clip the track edge.
+    private let hPad: CGFloat = 22
 
     var body: some View {
         GeometryReader { geo in
@@ -243,11 +243,10 @@ private struct TimeSlider: View {
         .frame(height: 36)
     }
 
-    /// Compact 12-hour cardinal label: "12a", "6a", "12p", "6p".
+    /// 12-hour cardinal label with the full meridiem: "12 AM", "6 AM", "12 PM",
+    /// "6 PM" (same form as the dial's hour labels).
     private func hourLabel(_ h: Int) -> String {
-        if h == 0 { return "12a" }
-        if h == 12 { return "12p" }
-        return h < 12 ? "\(h)a" : "\(h - 12)p"
+        Format.hour12(h)
     }
 }
 
