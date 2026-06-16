@@ -3,7 +3,9 @@ import SwiftUI
 /// Feature 5: schedule one or more daily rotation times. The top half is a live
 /// "celestial dial" (a high-tech horizon clock: sun and moon ride a neon arc as
 /// the day turns, with a marker per scheduled time); the bottom half is the
-/// editor (a digital picker per time, the actual source of truth, plus +/−).
+/// editor (a 15-minute-notched slider per time, the actual source of truth, plus
+/// an Add control). Dragging a slider glides its dot around the dial live; the
+/// list re-sorts chronologically when the slider is released.
 ///
 /// Apply is automatic and debounced: any add, remove, or picker edit rewrites
 /// the user LaunchAgent's `StartCalendarInterval` and reloads it ~0.4s later, so
@@ -36,14 +38,18 @@ struct SunMoonClock: View {
                 ForEach(Array(state.rotationTimes.enumerated()), id: \.element.id) { index, rt in
                     HStack(spacing: 10) {
                         Image(systemName: "clock").foregroundStyle(.secondary)
-                        DatePicker("", selection: timeBinding(for: rt), displayedComponents: .hourAndMinute)
-                            .datePickerStyle(.stepperField)
-                            .labelsHidden()
-                            // Force 12-hour AM/PM in the field regardless of the
-                            // system's 24-hour setting, so the picker matches the
-                            // AM/PM labels everywhere else in the app.
-                            .environment(\.locale, Locale(identifier: "en_US"))
-                        Spacer()
+                        // Live read-out of this row's time. Monospaced and fixed
+                        // width so the slider track to its right doesn't jitter as
+                        // the digits change while scrubbing.
+                        Text(Format.time12(rt))
+                            .font(.system(.body, design: .monospaced))
+                            .frame(width: 78, alignment: .leading)
+                        // A custom day track: 24 clean white hour notches (labelled
+                        // at the 6-hour cardinals) with a draggable thumb. Dragging
+                        // writes straight into `rotationTimes`, so the matching dot
+                        // glides around the dial live; the list is only re-sorted when
+                        // the drag ends, so the thumb never jumps out from under it.
+                        TimeSlider(minutes: minuteBinding(for: rt), onRelease: sortTimes)
                         Button(role: .destructive) { remove(rt) } label: {
                             Image(systemName: "minus.circle.fill")
                         }
@@ -99,25 +105,29 @@ struct SunMoonClock: View {
 
     // MARK: - editor actions
 
-    /// A `Binding<Date>` for a row's `DatePicker`, keyed by the time's id so an
-    /// edit writes back into the live `rotationTimes` array (which drives the
-    /// auto-apply). Reads/writes only the hour and minute.
-    private func timeBinding(for rt: RotationTime) -> Binding<Date> {
-        Binding<Date>(
+    /// A `Binding<Double>` (minutes since midnight) for a row's slider, keyed by
+    /// the time's id so a drag writes back into the live `rotationTimes` array
+    /// (which drives both the dial and the debounced auto-apply). The slider's
+    /// 15-minute step means the written value is always a clean quarter-hour.
+    private func minuteBinding(for rt: RotationTime) -> Binding<Double> {
+        Binding<Double>(
             get: {
                 let current = state.rotationTimes.first { $0.id == rt.id } ?? rt
-                var c = DateComponents()
-                c.hour = current.hour
-                c.minute = current.minute
-                return Calendar.current.date(from: c) ?? Date()
+                return Double(current.hour * 60 + current.minute)
             },
-            set: { newDate in
+            set: { newValue in
                 guard let i = state.rotationTimes.firstIndex(where: { $0.id == rt.id }) else { return }
-                let c = Calendar.current.dateComponents([.hour, .minute], from: newDate)
-                state.rotationTimes[i].hour = c.hour ?? 0
-                state.rotationTimes[i].minute = c.minute ?? 0
+                let mins = Int(newValue.rounded())
+                state.rotationTimes[i].hour = mins / 60
+                state.rotationTimes[i].minute = mins % 60
             }
         )
+    }
+
+    /// Re-order the rows chronologically. Called when a slider is released, not
+    /// during the drag, so the thumb under the cursor never jumps mid-scrub.
+    private func sortTimes() {
+        state.rotationTimes.sort()
     }
 
     private func addTime() {
@@ -159,6 +169,80 @@ struct SunMoonClock: View {
                 }
             }
         }
+    }
+}
+
+/// A custom day track for one rotation time. A thin baseline carries 24 evenly
+/// spaced white hour notches; the 6-hour cardinals are taller and labelled
+/// (12a / 6a / 12p / 6p). A white thumb marks the current time. Dragging snaps to
+/// 15 minutes and writes back through `minutes` (so the dial dot tracks live);
+/// `onRelease` fires once when the drag ends (the caller re-sorts the list there).
+private struct TimeSlider: View {
+    @Binding var minutes: Double
+    var onRelease: () -> Void
+
+    private let dayMinutes = 1440.0
+    private let step = 15.0
+    private let notchY: CGFloat = 11
+    private let thumbR: CGFloat = 7
+    /// Horizontal breathing room so the end notches' centred labels ("12a" at the
+    /// far left, the last cardinal near the right) don't clip the track edge.
+    private let hPad: CGFloat = 16
+
+    var body: some View {
+        GeometryReader { geo in
+            let usable = max(geo.size.width - 2 * hPad, 1)
+            let frac = min(max(minutes / dayMinutes, 0), 1)
+            ZStack(alignment: .topLeading) {
+                Canvas { ctx, size in
+                    let span = max(size.width - 2 * hPad, 1)
+                    var base = Path()
+                    base.move(to: CGPoint(x: hPad, y: notchY))
+                    base.addLine(to: CGPoint(x: size.width - hPad, y: notchY))
+                    ctx.stroke(base, with: .color(.white.opacity(0.20)), lineWidth: 1)
+
+                    for h in 0..<24 {
+                        let x = hPad + CGFloat(h) / 24.0 * span
+                        let key = h % 6 == 0
+                        let half: CGFloat = key ? 8 : 4
+                        var tick = Path()
+                        tick.move(to: CGPoint(x: x, y: notchY - half))
+                        tick.addLine(to: CGPoint(x: x, y: notchY + half))
+                        ctx.stroke(tick, with: .color(.white.opacity(key ? 0.9 : 0.45)),
+                                   lineWidth: key ? 1.5 : 1)
+                        if key {
+                            let label = Text(hourLabel(h))
+                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.7))
+                            ctx.draw(label, at: CGPoint(x: x, y: notchY + half + 9))
+                        }
+                    }
+                }
+                Circle()
+                    .fill(.white)
+                    .frame(width: thumbR * 2, height: thumbR * 2)
+                    .shadow(color: .black.opacity(0.4), radius: 1.5, y: 0.5)
+                    .position(x: hPad + CGFloat(frac) * usable, y: notchY)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        let raw = Double((v.location.x - hPad) / usable) * dayMinutes
+                        let snapped = (raw / step).rounded() * step
+                        minutes = min(max(snapped, 0), dayMinutes - step)
+                    }
+                    .onEnded { _ in onRelease() }
+            )
+        }
+        .frame(height: 36)
+    }
+
+    /// Compact 12-hour cardinal label: "12a", "6a", "12p", "6p".
+    private func hourLabel(_ h: Int) -> String {
+        if h == 0 { return "12a" }
+        if h == 12 { return "12p" }
+        return h < 12 ? "\(h)a" : "\(h - 12)p"
     }
 }
 
@@ -237,7 +321,10 @@ private struct CelestialDial: View {
                 context.stroke(tick, with: .color(.white.opacity(isCardinal ? 0.8 : 0.45)),
                                lineWidth: isCardinal ? 1.6 : 1)
                 if isCardinal && hour != 0 && hour != 24 {
-                    let lp = clamped(pointAt(sf, radius: R + 26, cx: cx, cy: cy), in: size, inset: 14)
+                    // Sit the white hour labels just *inside* the ring; the blue
+                    // scheduled-time captions live outside it, so keeping the two
+                    // on opposite sides of the arc stops them overlapping.
+                    let lp = clamped(pointAt(sf, radius: R - 20, cx: cx, cy: cy), in: size, inset: 14)
                     let label = Text(Format.hour12(hour))
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.9))
