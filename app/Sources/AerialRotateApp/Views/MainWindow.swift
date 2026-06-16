@@ -375,18 +375,18 @@ enum Format {
 
     static func shortID(_ id: String) -> String { String(id.prefix(8)).lowercased() }
 
-    /// 12-hour "8:00 AM" for a single time. The app shows every time in AM/PM.
+    /// 12-hour "8:00AM" for a single time. The app shows every time in AM/PM.
     static func time12(_ t: RotationTime) -> String {
         let am = t.hour < 12
         let h = t.hour % 12 == 0 ? 12 : t.hour % 12
-        return String(format: "%d:%02d %@", h, t.minute, am ? "AM" : "PM")
+        return String(format: "%d:%02d%@", h, t.minute, am ? "AM" : "PM")
     }
 
-    /// Full 12-hour hour-only "6 AM" / "12 PM" for the dial's cardinal labels.
+    /// Full 12-hour hour-only "6AM" / "12PM" for the dial's cardinal labels.
     static func hour12(_ hour: Int) -> String {
         let am = hour < 12
         let h = hour % 12 == 0 ? 12 : hour % 12
-        return "\(h) \(am ? "AM" : "PM")"
+        return "\(h)\(am ? "AM" : "PM")"
     }
 
     /// "8:00 AM, 12:00 PM, 6:30 PM" for the schedule label (sorted).

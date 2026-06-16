@@ -37,6 +37,10 @@ final class AppState: ObservableObject {
     @Published var lastEvent: String = ""           // most recent NOTIFY summary, for the menu
     @Published var lastEventAt: Date?
 
+    /// Latest local weather, polled by `WeatherStore`. `.unknown` until the first
+    /// successful fetch; the dial draws a plain time-of-day sky in that case.
+    @Published var weather: WeatherSnapshot = .unknown
+
     /// Bumped to request the main window be opened/raised (from the menu or a
     /// notification click). `AerialRotateApp` observes this via `onChange`.
     @Published var openWindowRequests: Int = 0

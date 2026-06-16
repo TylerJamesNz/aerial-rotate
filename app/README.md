@@ -26,6 +26,15 @@ time both act instantly with no password prompt, then the window updates.
   the asset dir under `com.apple.idleassetsd` (sizes + catalog), `entries.json`
   (human names), the user wallpaper `Index.plist` (current id), and the user
   LaunchAgent plist (the schedule). No Full Disk Access, no root for reads.
+- **One outbound network read: live weather for the dial.** `WeatherStore`
+  polls every 20 minutes for approximate location (machine public IP via
+  `ipapi.co`, so no CoreLocation prompt) then current conditions (Open-Meteo,
+  free, no API key), and publishes a `WeatherSnapshot` onto `AppState.weather`
+  that the sun/moon dial draws as clouds/rain/clear. This is the one read that
+  leaves the machine; everything else stays on local world-readable files. Any
+  failure (offline, rate-limited) silently keeps the last snapshot, and the
+  cold/offline default is a plain time-of-day sky with no particles. The app
+  isn't sandboxed, so the plain HTTPS calls need no entitlements.
 - **Daemon -> app channel is the log.** `LogTailer` watches the log with a
   `DispatchSource` vnode source, parses `NOTIFY:` lines into the progress model,
   and posts banners. The app posting banners is the whole point: it runs in the

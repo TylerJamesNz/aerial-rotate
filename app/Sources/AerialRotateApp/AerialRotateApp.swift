@@ -43,6 +43,7 @@ private struct MenuBarLabel: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let tailer = LogTailer()
+    private let weather = WeatherStore()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // LSUIElement already sets accessory policy; assert it for clarity.
@@ -52,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Notifier.shared.bootstrap()
         tailer.start()
         AppState.shared.refresh()
+        weather.start()
     }
 
     // Agent app: closing the window must not quit it; the menu bar item lives on.
