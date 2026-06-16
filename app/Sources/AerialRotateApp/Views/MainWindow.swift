@@ -202,7 +202,7 @@ private struct CacheListView: View {
                 Text("Installed aerials").font(.headline)
                 Spacer()
                 Button { state.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(HoverIconButtonStyle())
             }
             if state.snapshot.items.isEmpty {
                 Text("No aerials on disk.").foregroundStyle(.secondary).font(.callout)
@@ -232,7 +232,7 @@ private struct CacheListView: View {
                             } label: {
                                 Image(systemName: "folder")
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(HoverIconButtonStyle())
                             .help("Reveal in Finder")
                         }
                     }
