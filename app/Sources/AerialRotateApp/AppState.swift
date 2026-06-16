@@ -51,6 +51,18 @@ final class AppState: ObservableObject {
     /// to `shuffle-favourites.json` on every toggle for the daemon to read.
     @Published var favourites: Set<String> = []
 
+    /// The last curated (non-empty) selection, kept so the Select-all row can
+    /// flip between "all" and the operator's remembered picks instead of losing
+    /// them. UI-only, so it lives in UserDefaults, not the daemon's favourites
+    /// file (the daemon only ever reads `favourites`). Survives relaunch.
+    private static let rememberedKey = "shuffleRememberedFavourites"
+    private var rememberedFavourites: Set<String> =
+        Set(UserDefaults.standard.stringArray(forKey: AppState.rememberedKey) ?? [])
+
+    private func saveRemembered() {
+        UserDefaults.standard.set(Array(rememberedFavourites), forKey: AppState.rememberedKey)
+    }
+
     /// Bumped to request the main window be opened/raised (from the menu or a
     /// notification click). `AerialRotateApp` observes this via `onChange`.
     @Published var openWindowRequests: Int = 0
@@ -155,12 +167,35 @@ final class AppState: ObservableObject {
         }
         if next.count == shufflePool.count { next = [] }   // full set == all
         favourites = next
+        // Remember any non-empty curation so the Select-all row can flip back to
+        // it. The empty "all" sentinel is never a remembered preference.
+        if !next.isEmpty {
+            rememberedFavourites = next
+            saveRemembered()
+        }
         FavouritesStore.save(next)
     }
 
-    /// Select-all row: reset to the all-default (empty sentinel) and persist.
+    /// Select-all row, toggled. Flips between "all" (the empty sentinel) and the
+    /// operator's remembered individual picks. From all, it restores the last
+    /// remembered selection (or seeds with the first aerial if there's nothing
+    /// remembered yet); from a curated subset, it remembers that subset and
+    /// returns to all. Stale remembered ids (catalog changed) are dropped.
     func selectAllFavourites() {
-        favourites = []
-        FavouritesStore.save([])
+        if allFavourited {
+            let restored = rememberedFavourites.intersection(Set(shufflePool.map(\.id)))
+            if !restored.isEmpty {
+                favourites = restored
+            } else if let first = shufflePool.first?.id {
+                favourites = [first]
+            } else {
+                favourites = []
+            }
+        } else {
+            rememberedFavourites = favourites
+            saveRemembered()
+            favourites = []
+        }
+        FavouritesStore.save(favourites)
     }
 }
