@@ -204,37 +204,42 @@ private struct CacheListView: View {
             if state.snapshot.items.isEmpty {
                 Text("No aerials on disk.").foregroundStyle(.secondary).font(.callout)
             }
-            ForEach(state.snapshot.items) { item in
-                HStack(spacing: 8) {
-                    Image(systemName: item.isCurrent ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(item.isCurrent ? Color.accentColor : Color.secondary)
-                    AerialThumbnail(id: item.id)
-                    VStack(alignment: .leading, spacing: 1) {
-                        HStack(spacing: 6) {
-                            Text(item.name).lineLimit(1)
-                            ShortIDTag(id: item.id, name: item.name)
+            VStack(spacing: 0) {
+                ForEach(Array(state.snapshot.items.enumerated()), id: \.element.id) { index, item in
+                    HStack(spacing: 8) {
+                        Image(systemName: item.isCurrent ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(item.isCurrent ? Color.accentColor : Color.secondary)
+                        AerialThumbnail(id: item.id)
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 6) {
+                                Text(item.name).lineLimit(1)
+                                ShortIDTag(id: item.id, name: item.name)
+                            }
+                            if item.appearedWithoutDaemon {
+                                Label("appeared (OS prefetch)", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption2).foregroundStyle(.orange)
+                            }
                         }
-                        if item.appearedWithoutDaemon {
-                            Label("appeared (OS prefetch)", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption2).foregroundStyle(.orange)
+                        Spacer()
+                        Text(Format.bytes(item.sizeBytes))
+                            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                        if let url = WallpaperStore.movURL(for: item.id) {
+                            Button {
+                                NSWorkspace.shared.activateFileViewerSelecting([url])
+                            } label: {
+                                Image(systemName: "folder")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Reveal in Finder")
                         }
                     }
-                    Spacer()
-                    Text(Format.bytes(item.sizeBytes))
-                        .font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                    if let url = WallpaperStore.movURL(for: item.id) {
-                        Button {
-                            NSWorkspace.shared.activateFileViewerSelecting([url])
-                        } label: {
-                            Image(systemName: "folder")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Reveal in Finder")
-                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(index.isMultiple(of: 2) ? Color.primary.opacity(0.05) : Color.clear)
                 }
-                .padding(.vertical, 2)
-                Divider()
             }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
     }
 }
