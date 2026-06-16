@@ -31,7 +31,7 @@ struct MainWindow: View {
 
             // Right column: curate which aerials the daemon shuffles in.
             ShufflePoolSidebar()
-                .frame(width: 240)
+                .frame(width: 320)
         }
         .frame(minHeight: 520)
         .onAppear { state.refresh() }
