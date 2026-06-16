@@ -250,11 +250,14 @@ private struct TimeSlider: View {
     }
 }
 
-/// The live horizon clock. A neon upper arc is the daylight track; a horizon line
-/// runs across the middle; the sun and moon ride the full ring (offset 12h), the
-/// one above the horizon highlighted, the one below dimmed. A notch per scheduled
-/// time sits at its position on the ring. `now` advances via the parent's
-/// `TimelineView`, so the bodies glide without manual refresh.
+/// The live rotating clock. The whole ring is offset so the current time is pinned
+/// to a bold white notch at the very top; everything else rides the ring and turns
+/// past that notch as the day advances. The sun sits at noon and the moon at
+/// midnight (half a ring apart), so each climbs to the top at its hour, the body in
+/// the upper half lit, the other dimmed. A neon band marks the daylight half, a dot
+/// per scheduled time sits at its offset from now, and "12 PM" is the one kept
+/// label, riding with the sun. `now` advances via the parent's `TimelineView`, so
+/// the ring glides without manual refresh.
 private struct CelestialDial: View {
     let now: Date
     let times: [RotationTime]
@@ -264,18 +267,23 @@ private struct CelestialDial: View {
             let R = min(size.width / 2, size.height / 2) * 0.60
             let cx = size.width / 2
             let cy = size.height / 2
-            let center = CGPoint(x: cx, y: cy)
 
-            // Dark "sky" backdrop card: a rounded rect filling the canvas with a
-            // night-sky gradient. The window behind the dial is light gray, which
-            // washed out the neon arc, ticks, and captions; a dark card makes every
-            // bright element (cyan dots, white ticks, neon track) read with high
-            // contrast regardless of system light/dark mode.
+            let nowFrac = fractionOfDay(now)
+            // Rotate the whole dial so the current time is pinned to the top. A clock
+            // fraction `sf` (0 = midnight, 0.5 = noon) is mapped through `disp` before
+            // being turned into a ring point, and `disp(nowFrac)` lands at 0.5, which
+            // `pointAt` draws at the very top. Everything that rides the ring (sun,
+            // moon, scheduled dots, the 12 PM anchor) rotates together as the day
+            // turns; only the bold "now" notch is painted at a fixed top.
+            func disp(_ sf: Double) -> Double { sf - nowFrac + 0.5 }
+
+            // Dark "sky" backdrop card so the bright ring elements read against the
+            // window's light gray, regardless of system light/dark mode.
             let cardRect = CGRect(origin: .zero, size: size).insetBy(dx: 1, dy: 1)
             let card = Path(roundedRect: cardRect, cornerRadius: 14)
             let sky = Gradient(colors: [
                 Color(red: 0.10, green: 0.13, blue: 0.23),   // upper sky
-                Color(red: 0.05, green: 0.06, blue: 0.12),   // horizon/ground
+                Color(red: 0.05, green: 0.06, blue: 0.12),   // lower sky
             ])
             context.fill(
                 card,
@@ -284,18 +292,24 @@ private struct CelestialDial: View {
                                       endPoint: CGPoint(x: cx, y: cardRect.maxY)))
             context.stroke(card, with: .color(.white.opacity(0.08)), lineWidth: 1)
 
-            // Faint full ring (the night side of the cycle).
+            // Faint full ring.
             let ring = Path(ellipseIn: CGRect(x: cx - R, y: cy - R, width: 2 * R, height: 2 * R))
-            context.stroke(ring, with: .color(.white.opacity(0.14)), lineWidth: 1)
+            context.stroke(ring, with: .color(.white.opacity(0.16)), lineWidth: 1)
 
-            // Bright upper arc = daylight track, neon gradient left→top→right.
+            // Daylight band: the 06:00 -> 18:00 half of the ring, sampled point by
+            // point so it rotates with everything else and stays centred on the sun
+            // (noon). Neon gradient, dawn on the left through dusk on the right.
             var arc = Path()
-            arc.addArc(center: center, radius: R,
-                       startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
+            let segs = 64
+            for i in 0...segs {
+                let sf = 0.25 + 0.5 * Double(i) / Double(segs)   // 06:00 .. 18:00
+                let p = pointAt(disp(sf), radius: R, cx: cx, cy: cy)
+                if i == 0 { arc.move(to: p) } else { arc.addLine(to: p) }
+            }
             let neon = Gradient(colors: [
-                Color(red: 0.20, green: 0.55, blue: 0.95),   // dawn (left)
-                Color(red: 0.65, green: 0.95, blue: 1.00),   // noon (top)
-                Color(red: 0.55, green: 0.35, blue: 0.95),   // dusk (right)
+                Color(red: 0.20, green: 0.55, blue: 0.95),   // dawn
+                Color(red: 0.65, green: 0.95, blue: 1.00),   // noon
+                Color(red: 0.55, green: 0.35, blue: 0.95),   // dusk
             ])
             context.stroke(
                 arc,
@@ -304,61 +318,69 @@ private struct CelestialDial: View {
                                       endPoint: CGPoint(x: cx + R, y: cy)),
                 style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
 
-            // Horizon line across the full width.
-            var horizon = Path()
-            horizon.move(to: CGPoint(x: 6, y: cy))
-            horizon.addLine(to: CGPoint(x: size.width - 6, y: cy))
-            context.stroke(horizon, with: .color(.white.opacity(0.28)),
-                           style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-
-            // Fine tick graduations every hour around the upper arc; cardinal
-            // hours get full 12-hour labels (6 AM / 12 PM / 6 PM on the track).
-            for hour in stride(from: 0, through: 24, by: 1) {
+            // Faint hour graduations the whole way round so the gaps between slots are
+            // easy to read; the 6-hour cardinals are a touch taller. No hour labels:
+            // the sun marks noon, the moon midnight, the bold notch the top is now.
+            for hour in 0..<24 {
                 let sf = Double(hour) / 24.0
-                let p = point(sf, R: R, cx: cx, cy: cy)
-                guard p.y <= cy + 0.5 else { continue }   // upper arc + horizon only
-                let isCardinal = (hour % 6 == 0)
-                let inner = pointAt(sf, radius: R - (isCardinal ? 7 : 4), cx: cx, cy: cy)
+                let cardinal = hour % 6 == 0
+                let outer = pointAt(disp(sf), radius: R, cx: cx, cy: cy)
+                let inner = pointAt(disp(sf), radius: R - (cardinal ? 7 : 4), cx: cx, cy: cy)
                 var tick = Path()
                 tick.move(to: inner)
-                tick.addLine(to: p)
-                context.stroke(tick, with: .color(.white.opacity(isCardinal ? 0.8 : 0.45)),
-                               lineWidth: isCardinal ? 1.6 : 1)
-                if isCardinal && hour != 0 && hour != 24 {
-                    // Sit the white hour labels just *inside* the ring; the blue
-                    // scheduled-time captions live outside it, so keeping the two
-                    // on opposite sides of the arc stops them overlapping.
-                    let lp = clamped(pointAt(sf, radius: R - 20, cx: cx, cy: cy), in: size, inset: 14)
-                    let label = Text(Format.hour12(hour))
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.9))
-                    context.draw(label, at: lp)
-                }
+                tick.addLine(to: outer)
+                context.stroke(tick, with: .color(.white.opacity(cardinal ? 0.5 : 0.22)),
+                               lineWidth: cardinal ? 1.4 : 1)
             }
 
-            // Scheduled-time markers: a glowing notch per time, bright above the
-            // horizon, dimmed below, each with a small caption just outside.
+            // Scheduled-time notches ride the ring at their offset from now: a glowing
+            // dot per time, brighter on the half nearer "now" (the upper half), each
+            // with a caption just outside the ring.
             for t in times {
                 let sf = (Double(t.hour) * 60 + Double(t.minute)) / 1440.0
-                let p = point(sf, R: R, cx: cx, cy: cy)
+                let d = disp(sf)
+                let p = pointAt(d, radius: R, cx: cx, cy: cy)
                 let up = p.y <= cy
                 let dot = Path(ellipseIn: CGRect(x: p.x - 4.5, y: p.y - 4.5, width: 9, height: 9))
-                context.fill(dot, with: .color(up ? .cyan : .white.opacity(0.45)))
-                context.stroke(dot, with: .color(.white.opacity(up ? 0.95 : 0.4)), lineWidth: 1.2)
-                let cap = clamped(pointAt(sf, radius: R + (up ? 30 : 24), cx: cx, cy: cy), in: size, inset: 16)
+                context.fill(dot, with: .color(up ? .cyan : .cyan.opacity(0.5)))
+                context.stroke(dot, with: .color(.white.opacity(up ? 0.95 : 0.5)), lineWidth: 1.2)
+                let cap = clamped(pointAt(d, radius: R + 20, cx: cx, cy: cy), in: size, inset: 16)
                 let label = Text(Format.time12(t))
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(up ? Color.cyan : .white.opacity(0.6))
+                    .foregroundStyle(up ? Color.cyan : .white.opacity(0.65))
                 context.draw(label, at: cap)
             }
 
-            // Sun and moon ride the ring 12h apart; the one above the horizon is
-            // lit (with a glow), the one below is dimmed.
-            let dayFraction = fractionOfDay(now)
-            let sun = point(dayFraction, R: R, cx: cx, cy: cy)
-            let moon = point((dayFraction + 0.5).truncatingRemainder(dividingBy: 1), R: R, cx: cx, cy: cy)
+            // Sun rides at noon, moon at midnight, half a ring apart; both rotate with
+            // everything, so the sun climbs to the top at midday and the moon at
+            // midnight. The body in the upper half is lit with a glow, the other dimmed.
+            let sun = pointAt(disp(0.5), radius: R, cx: cx, cy: cy)
+            let moon = pointAt(disp(0.0), radius: R, cx: cx, cy: cy)
             drawBody(context, "sun.max.fill", at: sun, up: sun.y <= cy, color: .orange, glow: .orange)
             drawBody(context, "moon.fill", at: moon, up: moon.y <= cy, color: Color(white: 0.92), glow: .white)
+
+            // The single kept hour label: "12 PM" riding just inside the ring with the
+            // sun, the one absolute anchor on an otherwise relative dial.
+            let noonLabelP = clamped(pointAt(disp(0.5), radius: R - 18, cx: cx, cy: cy), in: size, inset: 14)
+            let noonLabel = Text("12 PM")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.8))
+            context.draw(noonLabel, at: noonLabelP)
+
+            // The fixed "now" marker: a bold white notch at the very top with a soft
+            // glow, and the current time spelled out above it. Everything else slides
+            // past this; it never moves.
+            var nowTick = Path()
+            nowTick.move(to: CGPoint(x: cx, y: cy - R - 7))
+            nowTick.addLine(to: CGPoint(x: cx, y: cy - R + 11))
+            context.stroke(nowTick, with: .color(.white.opacity(0.35)), lineWidth: 6)
+            context.stroke(nowTick, with: .color(.white), lineWidth: 2.5)
+            let nowComps = Calendar.current.dateComponents([.hour, .minute], from: now)
+            let nowRT = RotationTime(hour: nowComps.hour ?? 0, minute: nowComps.minute ?? 0)
+            let nowText = Text(Format.time12(nowRT))
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .foregroundStyle(.white)
+            context.draw(nowText, at: CGPoint(x: cx, y: cy - R - 19))
         }
     }
 
@@ -368,13 +390,6 @@ private struct CelestialDial: View {
     private func fractionOfDay(_ date: Date) -> Double {
         let c = Calendar.current.dateComponents([.hour, .minute], from: date)
         return Double((c.hour ?? 0) * 60 + (c.minute ?? 0)) / 1440.0
-    }
-
-    /// Position on the ring for a day-fraction. Noon sits at top, midnight at
-    /// bottom, 06:00 on the left horizon, 18:00 on the right: `theta = 3π/2 −
-    /// 2π·sf`, screen y inverted.
-    private func point(_ sf: Double, R: CGFloat, cx: CGFloat, cy: CGFloat) -> CGPoint {
-        pointAt(sf, radius: R, cx: cx, cy: cy)
     }
 
     private func pointAt(_ sf: Double, radius: CGFloat, cx: CGFloat, cy: CGFloat) -> CGPoint {
