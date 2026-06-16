@@ -435,39 +435,41 @@ private struct HoverMarquee: View {
     let text: String
     var font: Font = .callout
 
-    @State private var textWidth: CGFloat = 0
-    @State private var boxWidth: CGFloat = 0
+    @State private var textSize: CGSize = .zero
     @State private var hovering = false
 
-    private var overflow: CGFloat { max(0, textWidth - boxWidth) }
-
     var body: some View {
-        Text(text)
-            .font(font)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .background(widthReader { textWidth = $0 })
-            .offset(x: hovering ? -overflow : 0)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(widthReader { boxWidth = $0 })
-            .clipped()
-            .contentShape(Rectangle())
-            .onHover { h in
-                guard overflow > 0 else { return }
-                withAnimation(h
-                    ? .linear(duration: Double(overflow) / 35).delay(0.25)
-                    : .easeOut(duration: 0.2)) {
-                    hovering = h
+        GeometryReader { geo in
+            let overflow = max(0, textSize.width - geo.size.width)
+            Text(text)
+                .font(font)
+                .lineLimit(1)
+                .fixedSize()
+                .background(
+                    GeometryReader { t in
+                        Color.clear
+                            .onAppear { textSize = t.size }
+                            .onChange(of: t.size) { _, new in textSize = new }
+                    }
+                )
+                .offset(x: hovering ? -overflow : 0)
+                .frame(width: geo.size.width, alignment: .leading)
+                .clipped()
+                .contentShape(Rectangle())
+                .onHover { h in
+                    guard overflow > 0 else { return }
+                    withAnimation(h
+                        ? .linear(duration: Double(overflow) / 35).delay(0.25)
+                        : .easeOut(duration: 0.2)) {
+                        hovering = h
+                    }
                 }
-            }
-    }
-
-    private func widthReader(_ update: @escaping (CGFloat) -> Void) -> some View {
-        GeometryReader { g in
-            Color.clear
-                .onAppear { update(g.size.width) }
-                .onChange(of: g.size.width) { _, new in update(new) }
         }
+        // GeometryReader is greedy; pin it to the leftover row width and the
+        // text's own height so it never forces the row wider (which knocked the
+        // checkbox + thumbnail out of line) or taller.
+        .frame(maxWidth: .infinity)
+        .frame(height: textSize.height == 0 ? 17 : textSize.height)
     }
 }
 
