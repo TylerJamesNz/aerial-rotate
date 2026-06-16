@@ -300,8 +300,8 @@ private struct ShufflePoolSidebar: View {
                                     Image(systemName: state.isFavourite(asset.id) ? "checkmark.square.fill" : "square")
                                         .foregroundStyle(state.isFavourite(asset.id) ? Color.accentColor : Color.secondary)
                                     AerialThumbnail(id: asset.id)
-                                    Text(asset.name).lineLimit(1).font(.callout)
-                                    Spacer(minLength: 0)
+                                    HoverMarquee(text: asset.name)
+                                    ShortIDTag(id: asset.id, name: asset.name)
                                 }
                                 .padding(.vertical, 5)
                                 .padding(.horizontal, 8)
@@ -422,6 +422,52 @@ private enum ThumbnailCache {
               let img = NSImage(contentsOfFile: path) else { return nil }
         mem[id] = img
         return img
+    }
+}
+
+// MARK: - hover-scroll label
+
+/// Single-line label that scrolls horizontally on hover when its text is wider
+/// than the width it's given, so a clipped aerial name can be read in full
+/// without a tooltip. Fills the available width like a flexible column; sits
+/// still when the text already fits.
+private struct HoverMarquee: View {
+    let text: String
+    var font: Font = .callout
+
+    @State private var textWidth: CGFloat = 0
+    @State private var boxWidth: CGFloat = 0
+    @State private var hovering = false
+
+    private var overflow: CGFloat { max(0, textWidth - boxWidth) }
+
+    var body: some View {
+        Text(text)
+            .font(font)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .background(widthReader { textWidth = $0 })
+            .offset(x: hovering ? -overflow : 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(widthReader { boxWidth = $0 })
+            .clipped()
+            .contentShape(Rectangle())
+            .onHover { h in
+                guard overflow > 0 else { return }
+                withAnimation(h
+                    ? .linear(duration: Double(overflow) / 35).delay(0.25)
+                    : .easeOut(duration: 0.2)) {
+                    hovering = h
+                }
+            }
+    }
+
+    private func widthReader(_ update: @escaping (CGFloat) -> Void) -> some View {
+        GeometryReader { g in
+            Color.clear
+                .onAppear { update(g.size.width) }
+                .onChange(of: g.size.width) { _, new in update(new) }
+        }
     }
 }
 
