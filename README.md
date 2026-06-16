@@ -85,7 +85,7 @@ app/                                 # SwiftUI menu-bar status app (see app/READ
 
 ## Menu-bar app
 
-`app/` is a native SwiftUI menu-bar app (`AerialRotate.app`) that puts an interactive face on the daemon: live rotation progress, the current wallpaper with Reveal-in-Finder, disk usage, a countdown to the next rotation, a sun/moon clock to set the daily time, and the full installed-aerial catalog flagging anything macOS prefetched. It reads the daemon's own log/state (no daemon rewrite) and posts its own Notification Center banners from the user GUI session, where the root daemon can't. `install.sh` builds and installs it as a login item in `~/Applications`. See [app/README.md](app/README.md).
+`app/` is a native SwiftUI menu-bar app (`AerialRotate.app`) that puts an interactive face on the daemon: live rotation progress, the current wallpaper with Reveal-in-Finder, disk usage, a countdown to the next rotation, a sun/moon celestial dial for scheduling one or more daily rotation times (shown in 12-hour AM/PM), and the full installed-aerial catalog flagging anything macOS prefetched. The dropdown also shows the running app version. It reads the daemon's own log/state (no daemon rewrite) and posts its own Notification Center banners from the user GUI session, where the root daemon can't. `install.sh` builds and installs it as a login item in `~/Applications`. See [app/README.md](app/README.md).
 
 ### Updating the app
 

@@ -5,8 +5,9 @@
 A native SwiftUI agent app (`LSUIElement`, no Dock icon) that puts an
 interactive face on the `aerial-rotate` daemon. It lives in the menu bar and
 opens a window showing live rotation progress, the current wallpaper, disk
-usage, a countdown to the next rotation, a sun/moon clock to set the daily run
-time, and the full installed-aerial catalog. It also posts the app's own
+usage, a countdown to the next rotation, a sun/moon celestial dial for
+scheduling one or more daily rotation times (shown in 12-hour AM/PM), and the
+full installed-aerial catalog. It also posts the app's own
 Notification Center banners, clicking one opens the window.
 
 ## How operators feel it
