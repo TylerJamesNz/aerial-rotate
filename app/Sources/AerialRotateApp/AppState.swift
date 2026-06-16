@@ -41,6 +41,16 @@ final class AppState: ObservableObject {
     /// successful fetch; the dial draws a plain time-of-day sky in that case.
     @Published var weather: WeatherSnapshot = .unknown
 
+    /// The whole shuffle-eligible catalog (entries.json superset), shown in the
+    /// favourites sidebar. Loaded off the main actor in `refresh()`.
+    @Published var shufflePool: [ShuffleAsset] = []
+
+    /// Curated shuffle favourites. EMPTY is the "all" sentinel: zero curated
+    /// means the daemon shuffles the whole pool, and every sidebar row reads as
+    /// ticked. A non-empty set narrows the pool to exactly those ids. Mirrored
+    /// to `shuffle-favourites.json` on every toggle for the daemon to read.
+    @Published var favourites: Set<String> = []
+
     /// Bumped to request the main window be opened/raised (from the menu or a
     /// notification click). `AerialRotateApp` observes this via `onChange`.
     @Published var openWindowRequests: Int = 0
@@ -56,9 +66,17 @@ final class AppState: ObservableObject {
             let snap = CacheModel.snapshot(currentID: currentID)
             let times = CacheModel.rotationTimes()
             let rotating = WallpaperStore.isRotating()
+            let pool = ShufflePool.load()
+            let favs = FavouritesStore.load()
             await MainActor.run {
                 self.snapshot = snap
                 self.rotating = rotating
+                // Reassign the pool / favourites only when they actually changed,
+                // so the 5s refresh doesn't redraw the sidebar (and clobber an
+                // in-flight toggle) on every tick. The file the UI just wrote is
+                // the source of truth, so a re-read normally matches in-memory.
+                if self.shufflePool != pool { self.shufflePool = pool }
+                if self.favourites != favs { self.favourites = favs }
                 if let id = currentID,
                    let item = snap.items.first(where: { $0.id == id }) {
                     self.currentName = item.name
@@ -106,5 +124,43 @@ final class AppState: ObservableObject {
     func recordEvent(_ summary: String) {
         lastEvent = summary
         lastEventAt = Date()
+    }
+
+    // MARK: - shuffle favourites
+
+    /// Whether `id` is treated as a shuffle favourite right now. Empty favourites
+    /// is the "all" sentinel, so every asset reads as ticked until curation starts.
+    func isFavourite(_ id: String) -> Bool {
+        favourites.isEmpty || favourites.contains(id)
+    }
+
+    /// Select-all is ticked exactly when nothing is curated (the all-default).
+    var allFavourited: Bool { favourites.isEmpty }
+
+    /// Toggle one asset's membership and persist. Un-ticking while on the "all"
+    /// sentinel materialises the explicit "everything except this" set; re-ticking
+    /// back to the full pool collapses to the empty sentinel (daemon treats a full
+    /// set as "all" anyway). The empty sentinel is never an empty pool: it means all.
+    func toggleFavourite(_ id: String) {
+        var next: Set<String>
+        if favourites.isEmpty {
+            next = Set(shufflePool.map(\.id))
+            next.remove(id)
+        } else if favourites.contains(id) {
+            next = favourites
+            next.remove(id)
+        } else {
+            next = favourites
+            next.insert(id)
+        }
+        if next.count == shufflePool.count { next = [] }   // full set == all
+        favourites = next
+        FavouritesStore.save(next)
+    }
+
+    /// Select-all row: reset to the all-default (empty sentinel) and persist.
+    func selectAllFavourites() {
+        favourites = []
+        FavouritesStore.save([])
     }
 }
