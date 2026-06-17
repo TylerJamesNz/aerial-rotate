@@ -13,9 +13,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.43</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>45</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>LSMinimumSystemVersion</key>
@@ -26,6 +26,8 @@
     <string>NSApplication</string>
     <key>NSUserNotificationsUsageDescription</key>
     <string>Shows aerial wallpaper rotation progress and completion.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Used to fetch accurate local weather for the sky dial.</string>
     <key>NSHumanReadableCopyright</key>
     <string>Personal tool, self-signed, local only.</string>
 </dict>

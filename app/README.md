@@ -5,9 +5,11 @@
 A native SwiftUI agent app (`LSUIElement`, no Dock icon) that puts an
 interactive face on the `aerial-rotate` daemon. It lives in the menu bar and
 opens a window showing live rotation progress, the current wallpaper, disk
-usage, a countdown to the next rotation, a sun/moon clock to set the daily run
-time, and the full installed-aerial catalog. It also posts the app's own
-Notification Center banners, clicking one opens the window.
+usage, a countdown to the next rotation, a sun/moon celestial dial for
+scheduling one or more daily rotation times (shown in 12-hour AM/PM), the
+full installed-aerial catalog, and a right-hand sidebar to curate which aerials
+the daemon shuffles in. It also posts the app's own Notification Center banners,
+clicking one opens the window.
 
 ## How operators feel it
 
@@ -25,6 +27,15 @@ time both act instantly with no password prompt, then the window updates.
   the asset dir under `com.apple.idleassetsd` (sizes + catalog), `entries.json`
   (human names), the user wallpaper `Index.plist` (current id), and the user
   LaunchAgent plist (the schedule). No Full Disk Access, no root for reads.
+- **One outbound network read: live weather for the dial.** `WeatherStore`
+  polls every 20 minutes for approximate location (machine public IP via
+  `ipapi.co`, so no CoreLocation prompt) then current conditions (Open-Meteo,
+  free, no API key), and publishes a `WeatherSnapshot` onto `AppState.weather`
+  that the sun/moon dial draws as clouds/rain/clear. This is the one read that
+  leaves the machine; everything else stays on local world-readable files. Any
+  failure (offline, rate-limited) silently keeps the last snapshot, and the
+  cold/offline default is a plain time-of-day sky with no particles. The app
+  isn't sandboxed, so the plain HTTPS calls need no entitlements.
 - **Daemon -> app channel is the log.** `LogTailer` watches the log with a
   `DispatchSource` vnode source, parses `NOTIFY:` lines into the progress model,
   and posts banners. The app posting banners is the whole point: it runs in the
@@ -40,6 +51,18 @@ time both act instantly with no password prompt, then the window updates.
   Splitting timing (user agent) from privilege (root daemon) is what removed the
   old `with administrator privileges` prompt; a privileged helper (SMAppService)
   was never viable self-signed under CLT-only.
+- **The shuffle-pool sidebar is the one app-write the daemon then reads.** The
+  favourites sidebar lists the whole shuffle-eligible catalog (`ShufflePool`
+  mirrors the daemon's `entries.json` filter) as checkbox rows. Ticking a subset
+  writes `~/Library/Application Support/aerial-rotate/shuffle-favourites.json`
+  (`{ "ids": [...] }`, `FavouritesStore`), and the daemon's Python picker reads
+  it and shuffles only from the intersection. **Empty = all:** zero curated
+  favourites (the Select-all default, and the never-an-empty-pool floor) leaves
+  the daemon shuffling the whole catalog. This crosses the "reads only" stance
+  above: the app now also writes a file the daemon consumes, user-owned so still
+  password-free, and the daemon resolves the same path off the target user's
+  home (via `dscl`) rather than `$HOME` so it works under the root launchd
+  context.
 - **Build is SwiftPM + hand-assembled bundle.** No Xcode is installed (CLT
   only), so `build.sh` runs `swift build`, assembles `AerialRotate.app` around
   the binary with a hand-written `Info.plist`, and ad-hoc codesigns it
@@ -52,5 +75,6 @@ time both act instantly with no password prompt, then the window updates.
 - `../aerial-rotate.sh` — the daemon; source of the log/state the app reads.
 - `../com.tyler.aerial-rotate.plist` — root daemon, WatchPaths trigger -> rotate.
 - `../com.tyler.aerial-rotate-agent.plist` — user agent; the schedule the app reads and rewrites.
-- `../install.sh` — builds the app as the user and installs it as a login item.
+- `../install.sh` — one-time per-Mac install: privileged daemon/agent/swiftDialog, then calls `update.sh` for the app.
 - `build.sh` — `swift build` + bundle assembly + ad-hoc codesign.
+- `update.sh` — no-sudo app update: build, quit, swap into `~/Applications`, fix the login item, relaunch. The recurring path is `git pull && ./app/update.sh`.

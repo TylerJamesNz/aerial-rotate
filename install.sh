@@ -64,21 +64,26 @@ echo "== building + installing the menu-bar app =="
 # The app is the interactive face over the daemon's log/state. It must run in
 # the user's GUI session (login item), never as a daemon, because that's the
 # only context where UNUserNotificationCenter works (the root daemon can't get a
-# notification grant, swiftDialog issue #373). Build AS THE USER so .build/ and
-# the ad-hoc signature aren't root-owned; a build failure warns but does not
-# abort the daemon install.
-if sudo -u "$TARGET_USER" /bin/bash "$REPO_DIR/app/build.sh"; then
-  rm -rf /Applications/AerialRotate.app
-  cp -R "$REPO_DIR/app/AerialRotate.app" /Applications/
-  # Register as a hidden login item (run in the user's GUI session).
-  launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" osascript -e \
-    'tell application "System Events" to make login item at end with properties {path:"/Applications/AerialRotate.app", hidden:true}' \
-    >/dev/null 2>&1 || echo "  WARN: could not register login item (add it manually in System Settings > General > Login Items)"
-  # Launch it now so it can catch this install's rotation banners.
-  launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" open -a /Applications/AerialRotate.app || true
-  echo "  installed /Applications/AerialRotate.app (first launch may prompt to Allow Notifications)"
+# notification grant, swiftDialog issue #373). It has no privileged role, so it
+# lives in the user-owned ~/Applications and is built + swapped by app/update.sh
+# (no sudo). After this one-time install, app updates are just
+# `git pull && ./app/update.sh` with no password.
+
+# One-time legacy migration: drop the old root-owned /Applications copy + its
+# login item so machines that predate the ~/Applications move transition cleanly.
+# (update.sh, being unprivileged, can't remove a root-owned bundle; install.sh can.)
+rm -rf /Applications/AerialRotate.app
+launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" osascript -e \
+  'tell application "System Events" to if exists login item "AerialRotate" then delete login item "AerialRotate"' \
+  >/dev/null 2>&1 || true
+
+# Build + install via update.sh. Wrap in `launchctl asuser` so its GUI-targeting
+# steps (login item, open) work from this root context; a build failure warns but
+# does not abort the daemon install.
+if launchctl asuser "$USER_UID" sudo -u "$TARGET_USER" /bin/bash "$REPO_DIR/app/update.sh"; then
+  echo "  installed ~/Applications/AerialRotate.app (first launch may prompt to Allow Notifications)"
 else
-  echo "  WARN: app build failed — daemon is installed, but the menu-bar app was not. See output above."
+  echo "  WARN: app build/install failed — daemon is installed, but the menu-bar app was not. See output above."
 fi
 
 echo "== kicking one rotation now via the trigger (the real WatchPaths path) =="

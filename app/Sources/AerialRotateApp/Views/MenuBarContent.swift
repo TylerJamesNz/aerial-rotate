@@ -28,6 +28,16 @@ struct MenuBarContent: View {
 
         Divider()
 
+        // Self-verify which build a given Mac is on after `git pull && ./app/update.sh`.
+        Text("v\(appVersion)").font(.caption).foregroundStyle(.secondary)
         Button("Quit Aerial Rotate") { NSApp.terminate(nil) }
+    }
+
+    /// "<short> (<build>)" from the bundle's Info.plist, e.g. "1.1 (2)".
+    private var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(short) (\(build))"
     }
 }

@@ -35,6 +35,12 @@ USER_HOME=$(/usr/bin/dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/
 USER_UID=$(/usr/bin/id -u "$TARGET_USER" 2>/dev/null)
 STORE="$USER_HOME/Library/Application Support/com.apple.wallpaper/Store/Index.plist"
 
+# Curated shuffle favourites the menu-bar app writes (app/FavouritesStore.swift).
+# `{ "ids": [...] }`; an empty/missing file means "shuffle the whole pool". The
+# picker below intersects its pool with these ids. Resolved off the target
+# user's home (not $HOME) so it works under the root daemon's launchd context.
+FAVOURITES="$USER_HOME/Library/Application Support/aerial-rotate/shuffle-favourites.json"
+
 SENTINEL="/usr/local/var/aerial-rotate/trigger"  # WatchPaths trigger: a fresh touch (user agent at the scheduled time, or the app's Refresh button) fires this daemon
 SENTINEL_MAX_AGE=120                              # seconds; older = a launchd load-fire (boot/reload), not a real trigger -> skip
 
@@ -148,12 +154,35 @@ else
 fi
 
 # ---- pick a new aerial (id, url, human name) --------------------------------
-PICK=$(python3 - "$ENTRIES" "$CURRENT_ID" <<'PY'
+# Narrowed to the app's curated favourites when that file lists any ids;
+# empty/missing favourites, or a favourites set that excludes the whole live
+# pool, both fall back to the full pool (never pick from nothing).
+if [ -f "$FAVOURITES" ]; then
+  FAV_COUNT=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("ids",[])))' "$FAVOURITES" 2>/dev/null || echo 0)
+  log "shuffle favourites: ${FAV_COUNT} curated (0 = whole pool)"
+else
+  log "shuffle favourites: none curated (whole pool)"
+fi
+PICK=$(python3 - "$ENTRIES" "$CURRENT_ID" "$FAVOURITES" <<'PY'
 import json, sys, random
 data = json.load(open(sys.argv[1]))
 cur = sys.argv[2]
+fav_path = sys.argv[3]
 pool = [a for a in data.get("assets", [])
         if a.get("url-4K-SDR-240FPS") and a.get("includeInShuffle", True) and a.get("id") != cur]
+# Intersect with the curated favourites if the app wrote a non-empty set.
+# Empty file, missing file, malformed JSON, or an empty intersection all mean
+# "shuffle everything" so the daemon never ends up with an empty pool.
+favourites = set()
+try:
+    with open(fav_path) as f:
+        favourites = set(json.load(f).get("ids", []))
+except (IOError, OSError, ValueError):
+    favourites = set()
+if favourites:
+    narrowed = [a for a in pool if a.get("id") in favourites]
+    if narrowed:
+        pool = narrowed
 if not pool: sys.exit(0)
 a = random.choice(pool)
 print("%s\t%s\t%s" % (a["id"], a["url-4K-SDR-240FPS"], a.get("accessibilityLabel", "aerial")))
