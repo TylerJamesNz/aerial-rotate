@@ -199,21 +199,30 @@ final class AppState: ObservableObject {
     /// at a time (re-entrant calls return immediately), serially through
     /// `URLSession.shared` to stay polite to Apple's CDN. Drives the blue
     /// "thumbnails still arriving" info banner via `thumbnailFetchProgress`.
+    ///
+    /// The flag is set *synchronously* on MainActor before the detached task
+    /// spawns, because cold-launch fires three near-simultaneous refresh()
+    /// calls (AppDelegate, MainWindow.onAppear, the 5s Timer's first tick on
+    /// re-raise); leaving the guard inside the detached task lets all three
+    /// pass the check before any sets the flag.
     func refreshMissingThumbnails(pool: [ShuffleAsset]) {
         guard !thumbnailBatchInFlight else { return }
+        thumbnailBatchInFlight = true
         let poolIDs = pool.map(\.id)
         let total = poolIDs.count
         Task.detached(priority: .utility) {
             let missing = await ThumbnailCache.missingIDs(in: poolIDs)
-            guard !missing.isEmpty else { return }
+            guard !missing.isEmpty else {
+                await MainActor.run { self.thumbnailBatchInFlight = false }
+                return
+            }
             await MainActor.run {
-                guard !self.thumbnailBatchInFlight else { return }
-                self.thumbnailBatchInFlight = true
                 self.thumbnailFetchProgress = ThumbnailFetchProgress(loaded: 0, total: total)
             }
             ThumbnailCache.logBatchStart(missing: missing.count, total: total)
             let start = Date()
-            var loaded = total - missing.count
+            let alreadyCached = total - missing.count
+            var loaded = alreadyCached
             var failed = 0
             for id in missing {
                 let img = await ThumbnailCache.image(for: id)
@@ -224,7 +233,7 @@ final class AppState: ObservableObject {
                 }
             }
             let elapsed = Date().timeIntervalSince(start)
-            ThumbnailCache.logBatchEnd(loaded: loaded - (total - missing.count), failed: failed, elapsedSec: elapsed)
+            ThumbnailCache.logBatchEnd(loaded: loaded - alreadyCached, failed: failed, elapsedSec: elapsed)
             await MainActor.run {
                 self.thumbnailFetchProgress = nil
                 self.thumbnailBatchInFlight = false
