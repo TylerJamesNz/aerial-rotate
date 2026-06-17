@@ -43,6 +43,15 @@ enum PreflightFailure: Equatable {
     }
 }
 
+/// Live count for the "thumbnails still arriving" info banner — non-nil only
+/// while a refresh-driven batch is in flight. The banner reads this directly;
+/// AppState clears it back to nil the same MainActor hop that publishes the
+/// final progress, so the banner disappears the moment `loaded == total`.
+struct ThumbnailFetchProgress: Equatable {
+    var loaded: Int
+    var total: Int
+}
+
 /// One scheduled daily rotation time. The list of these is the source of truth
 /// for the schedule; each maps to a `{Hour, Minute}` dict in the agent plist's
 /// `StartCalendarInterval` array. Identifiable so SwiftUI can diff editor rows
@@ -100,6 +109,17 @@ final class AppState: ObservableObject {
     /// favourites sidebar. Loaded off the main actor in `refresh()`.
     @Published var shufflePool: [ShuffleAsset] = []
 
+    /// Non-nil while a refresh-driven thumbnail batch is in flight. Drives the
+    /// blue `ThumbnailsLoadingInfoBanner` in the banner stack; cleared in the
+    /// same MainActor hop that publishes the final progress so the banner
+    /// disappears the moment `loaded == total`.
+    @Published var thumbnailFetchProgress: ThumbnailFetchProgress?
+
+    /// Re-entrancy guard for the batch loader. The 5s auto-refresh fires
+    /// `refresh()` independent of whether a previous batch has finished, so
+    /// without this a slow CDN run would spawn parallel batches.
+    private var thumbnailBatchInFlight = false
+
     /// Curated shuffle favourites. EMPTY is the "all" sentinel: zero curated
     /// means the daemon shuffles the whole pool, and every sidebar row reads as
     /// ticked. A non-empty set narrows the pool to exactly those ids. Mirrored
@@ -127,6 +147,9 @@ final class AppState: ObservableObject {
     func requestOpenWindow() { openWindowRequests &+= 1 }
 
     /// Re-read cache + current wallpaper + schedule off the main actor, then publish.
+    /// After publishing the shuffle pool, kicks off the thumbnail-batch loader
+    /// (`refreshMissingThumbnails`) so the operator sees pool rows fill in
+    /// instead of grey placeholders.
     func refresh() {
         Task.detached(priority: .utility) {
             let currentID = WallpaperStore.currentAssetID()
@@ -166,6 +189,45 @@ final class AppState: ObservableObject {
                         zip(current, incoming).allSatisfy { $0.hour == $1.hour && $0.minute == $1.minute }
                     if !unchanged { self.rotationTimes = incoming }
                 }
+                self.refreshMissingThumbnails(pool: pool)
+            }
+        }
+    }
+
+    /// Diff the loaded pool against the thumbnail cache and serially fetch any
+    /// id whose preview is missing from all three local tiers. Runs one batch
+    /// at a time (re-entrant calls return immediately), serially through
+    /// `URLSession.shared` to stay polite to Apple's CDN. Drives the blue
+    /// "thumbnails still arriving" info banner via `thumbnailFetchProgress`.
+    func refreshMissingThumbnails(pool: [ShuffleAsset]) {
+        guard !thumbnailBatchInFlight else { return }
+        let poolIDs = pool.map(\.id)
+        let total = poolIDs.count
+        Task.detached(priority: .utility) {
+            let missing = await ThumbnailCache.missingIDs(in: poolIDs)
+            guard !missing.isEmpty else { return }
+            await MainActor.run {
+                guard !self.thumbnailBatchInFlight else { return }
+                self.thumbnailBatchInFlight = true
+                self.thumbnailFetchProgress = ThumbnailFetchProgress(loaded: 0, total: total)
+            }
+            ThumbnailCache.logBatchStart(missing: missing.count, total: total)
+            let start = Date()
+            var loaded = total - missing.count
+            var failed = 0
+            for id in missing {
+                let img = await ThumbnailCache.image(for: id)
+                if img != nil { loaded += 1 } else { failed += 1 }
+                let snapLoaded = loaded
+                await MainActor.run {
+                    self.thumbnailFetchProgress = ThumbnailFetchProgress(loaded: snapLoaded, total: total)
+                }
+            }
+            let elapsed = Date().timeIntervalSince(start)
+            ThumbnailCache.logBatchEnd(loaded: loaded - (total - missing.count), failed: failed, elapsedSec: elapsed)
+            await MainActor.run {
+                self.thumbnailFetchProgress = nil
+                self.thumbnailBatchInFlight = false
             }
         }
     }
