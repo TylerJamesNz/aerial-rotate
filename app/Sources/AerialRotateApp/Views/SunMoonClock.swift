@@ -489,11 +489,13 @@ private struct CelestialDial: View {
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.white), at: CGPoint(x: cx, y: lineY - 30))
 
-            // Sky icon above the time, picked from the current hour so it cuts over
-            // through the day: night moon, sunrise, daytime sun, sunset. Given the
-            // same soft radial halo the sun and moon used to carry, so it reads as
-            // the lit "current sky" floating over the timeline.
-            let (iconName, iconColor) = skyIcon(nowFrac)
+            // Sky icon above the time, picked from the current hour AND the live
+            // condition so it implies the weather, not just the time of day: clear
+            // sky keeps the warm time-of-day sun/moon, overcast/rain/snow/etc swap
+            // to the matching cloud glyph. Given the same soft radial halo the sun
+            // and moon used to carry, so it reads as the lit "current sky" floating
+            // over the timeline.
+            let (iconName, iconColor) = skyIcon(nowFrac, cond)
             drawBody(context, iconName, at: CGPoint(x: cx, y: lineY - 60),
                      up: true, color: iconColor, glow: iconColor,
                      glyph: 22, haloR: 18, alwaysLit: true)
@@ -583,12 +585,39 @@ private struct CelestialDial: View {
     /// dawn, day and sunset across the whole day so the icon always reflects the
     /// current phase (`f` is the day fraction, 0.5 = noon). The glyph snaps at the
     /// phase boundaries while its halo/tint and the card behind it glide.
-    private func skyIcon(_ f: Double) -> (String, Color) {
-        switch f {
-        case 0.22..<0.33: return ("sunrise.fill", Color(red: 1.0, green: 0.78, blue: 0.55))  // dawn, rose-gold
-        case 0.33..<0.71: return ("sun.max.fill", Color(red: 1.0, green: 0.85, blue: 0.35))  // day, warm yellow
-        case 0.71..<0.83: return ("sunset.fill", Color(red: 1.0, green: 0.55, blue: 0.30))   // sunset, deep orange
-        default:          return ("moon.stars.fill", Color(white: 0.92))                      // night, soft white
+    /// The centre glyph. `.clear`/`.unknown` keep the warm time-of-day icons (dawn,
+    /// day, sunset, night) so a clear sky and the no-data default look exactly as
+    /// before. Cloud/precip conditions swap to a cool grey-white glyph nudged per
+    /// condition, with a day/night sense for the partly-cloudy variant. Colours live
+    /// in one small table here so they are tunable at smoke time.
+    private func skyIcon(_ f: Double, _ condition: SkyCondition) -> (String, Color) {
+        // "Lit" through dawn/day/sunset (0.22..<0.83), night otherwise. Reuses the
+        // same boundaries the clear-sky buckets below use.
+        let lit = f >= 0.22 && f < 0.83
+
+        switch condition {
+        case .clear, .unknown:
+            switch f {
+            case 0.22..<0.33: return ("sunrise.fill", Color(red: 1.0, green: 0.78, blue: 0.55))  // dawn, rose-gold
+            case 0.33..<0.71: return ("sun.max.fill", Color(red: 1.0, green: 0.85, blue: 0.35))  // day, warm yellow
+            case 0.71..<0.83: return ("sunset.fill", Color(red: 1.0, green: 0.55, blue: 0.30))   // sunset, deep orange
+            default:          return ("moon.stars.fill", Color(white: 0.92))                      // night, soft white
+            }
+        case .partlyCloudy:
+            // A hint of warm sun/moon behind grey.
+            return lit
+                ? ("cloud.sun.fill", Color(red: 0.92, green: 0.88, blue: 0.78))
+                : ("cloud.moon.fill", Color(red: 0.82, green: 0.84, blue: 0.90))
+        case .cloudy:
+            return ("cloud.fill", Color(white: 0.85))                                             // neutral grey-white
+        case .fog:
+            return ("cloud.fog.fill", Color(white: 0.82))                                         // neutral grey-white
+        case .rain:
+            return ("cloud.rain.fill", Color(red: 0.70, green: 0.78, blue: 0.88))                 // cool blue-grey
+        case .snow:
+            return ("cloud.snow.fill", Color(white: 0.96))                                        // bright near-white
+        case .thunder:
+            return ("cloud.bolt.rain.fill", Color(red: 0.62, green: 0.66, blue: 0.74))            // darker slate
         }
     }
 
