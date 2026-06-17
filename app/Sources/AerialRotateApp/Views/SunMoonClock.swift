@@ -472,11 +472,20 @@ private struct CelestialDial: View {
                 context.fill(dot, with: .color(Color(white: 0.72)))
                 context.stroke(dot, with: .color(.white.opacity(0.6)), lineWidth: 1.2)
                 let capY = lineY + 18 + CGFloat(rows[i]) * Self.captionRowStep
-                let cap = CGPoint(x: min(max(x, 18), size.width - 18), y: capY)
+                // Anchor edge captions to the card edge instead of centring then
+                // clipping: flush-left near the left edge, flush-right near the right,
+                // centred elsewhere, so the full "12:00AM" always stays on the card.
+                let halfW: CGFloat = 24   // ~half a "12:00AM" at 11pt monospaced
+                let inset: CGFloat = 6
+                let anchor: UnitPoint
+                let capX: CGFloat
+                if x - halfW < inset { anchor = .leading; capX = inset }
+                else if x + halfW > size.width - inset { anchor = .trailing; capX = size.width - inset }
+                else { anchor = .center; capX = x }
                 let label = Text(Format.time12(t))
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.7))
-                context.draw(label, at: cap)
+                context.draw(label, at: CGPoint(x: capX, y: capY), anchor: anchor)
             }
 
             // The fixed "now" marker: a bold white notch through the centre of the
