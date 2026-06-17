@@ -10,6 +10,39 @@ struct DownloadProgress: Equatable {
     var assetID: String?
 }
 
+/// Why the daemon decided it can't rotate, surfaced as a typed banner in the
+/// main window's banner stack. `nil` on AppState means healthy. The
+/// LogTailer derives this from `PREFLIGHT: FAIL ...` lines and the existing
+/// `NOTIFY: Aerial rotate failed - code=<x> ...` channel; `applied` clears it.
+enum PreflightFailure: Equatable {
+    case noGUIUser
+    case catalogMissing(path: String)
+    case catalogMalformed(path: String)
+    case catalogEmpty(path: String)
+    case wallpaperStoreMissing(path: String)
+    case schemaShifted
+    case wallpaperSourceWrong(provider: String)
+    case wallpaperSourceUnset
+    case downloadFailed
+    case runtimeError(code: String, detail: String)
+
+    /// Two-word menu-bar label for the dropdown line under `lastEvent`.
+    var shortLabel: String {
+        switch self {
+        case .noGUIUser:                return "no active user session"
+        case .catalogMissing:           return "aerial catalog missing"
+        case .catalogMalformed:         return "aerial catalog malformed"
+        case .catalogEmpty:             return "aerial catalog empty"
+        case .wallpaperStoreMissing:    return "wallpaper store missing"
+        case .schemaShifted:            return "wallpaper schema shifted"
+        case .wallpaperSourceWrong:     return "wallpaper source isn't Aerial"
+        case .wallpaperSourceUnset:     return "wallpaper source not set"
+        case .downloadFailed:           return "download failed"
+        case .runtimeError(let code, _): return "rotation failed (\(code))"
+        }
+    }
+}
+
 /// One scheduled daily rotation time. The list of these is the source of truth
 /// for the schedule; each maps to a `{Hour, Minute}` dict in the agent plist's
 /// `StartCalendarInterval` array. Identifiable so SwiftUI can diff editor rows
@@ -46,6 +79,22 @@ final class AppState: ObservableObject {
     /// `LocationDisabledBanner`. False while authorized or still undecided, so
     /// the banner never flashes before the operator answers the prompt.
     @Published var locationDenied: Bool = false
+
+    /// Set when the daemon's most recent run hit a preflight failure (or a
+    /// rotation-time failure with a code= tag). `nil` means healthy. Cleared
+    /// when the LogTailer sees the next `NOTIFY: ✅ New wallpaper applied`.
+    @Published var preflight: PreflightFailure?
+
+    /// False when the daemon's last preflight noted `WARN dialog.missing`. The
+    /// app's user-session Notifier is the real banner channel, so this is
+    /// informational — surfaces a soft "install swiftDialog for daemon-side
+    /// notifications" hint, not a blocker.
+    @Published var dialogPresent: Bool = true
+
+    /// The console user the daemon resolved on its last run, surfaced in the
+    /// dropdown to help diagnose multi-user / no-GUI-user scenarios. nil until
+    /// the LogTailer parses the first `PREFLIGHT: OK user.console ...` line.
+    @Published var resolvedUser: String?
 
     /// The whole shuffle-eligible catalog (entries.json superset), shown in the
     /// favourites sidebar. Loaded off the main actor in `refresh()`.

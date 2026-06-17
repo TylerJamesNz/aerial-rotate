@@ -96,6 +96,9 @@ final class LogTailer {
 
     /// Read the last ~8 KB on launch to reconstruct the current state (last
     /// event, and whether a download appears to be in flight) without bannering.
+    /// Also seeds preflight banner state from the last PREFLIGHT: FAIL / WARN
+    /// line so the UI shows the daemon's last-known health on cold start, not
+    /// only after the next run.
     private func primeFromTail() {
         let f = open(path, O_RDONLY)
         guard f >= 0 else { return }
@@ -108,16 +111,31 @@ final class LogTailer {
         let n = read(f, &buf, buf.count)
         guard n > 0, let text = String(bytes: buf[0..<n], encoding: .utf8) else { return }
 
-        let notifyLines = text.split(separator: "\n").filter { $0.contains("NOTIFY:") }
-        guard let last = notifyLines.last.map(String.init),
-              let payload = Self.payload(of: last) else { return }
-        // Seed UI from the last event, but suppress banners during priming.
-        applyParsed(payload, banner: false)
+        let lines = text.split(separator: "\n").map(String.init)
+
+        // Walk every line in order so PREFLIGHT: OK lines that clear earlier
+        // FAILs (a successful run after a failed one) win, and the most recent
+        // NOTIFY: applied clears the preflight banner. Suppress banners during
+        // priming so a cold launch doesn't spam a tray of historical events.
+        for line in lines {
+            if line.contains("PREFLIGHT:") {
+                Self.applyPreflight(line: line)
+            } else if let payload = Self.payload(of: line) {
+                applyParsed(payload, banner: false)
+            }
+        }
     }
 
     // MARK: - parsing
 
     private func parse(_ line: String) {
+        // PREFLIGHT: lines are the daemon's own health stream; classify them
+        // before the NOTIFY: payload check so OK / WARN / FAIL banners land
+        // even when no NOTIFY follows (typical for warn-only runs).
+        if line.contains("PREFLIGHT:") {
+            Self.applyPreflight(line: line)
+            return
+        }
         guard let payload = Self.payload(of: line) else { return }
         applyParsed(payload, banner: true)
     }
@@ -126,6 +144,78 @@ final class LogTailer {
     private static func payload(of line: String) -> String? {
         guard let range = line.range(of: "NOTIFY: ") else { return nil }
         return String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Parse a `PREFLIGHT: <LEVEL> <check> [key=value ...]` line and update
+    /// AppState. Anchored on the `PREFLIGHT: ` substring; surrounding timestamp
+    /// is ignored. OK lines clear the matching failure or update resolvedUser;
+    /// WARN lines flip informational flags; FAIL lines set `state.preflight`.
+    private static func applyPreflight(line: String) {
+        guard let range = line.range(of: "PREFLIGHT: ") else { return }
+        let tail = String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+        let tokens = tail.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        guard tokens.count >= 1 else { return }
+        let level = String(tokens[0])
+        let rest = tokens.count > 1 ? String(tokens[1]) : ""
+
+        let restTokens = rest.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        let check = restTokens.first.map(String.init) ?? ""
+        let kvText = restTokens.count > 1 ? String(restTokens[1]) : ""
+        let fields = Self.parseFields(kvText)
+
+        DispatchQueue.main.async {
+            dispatchPreflight(level: level, check: check, fields: fields)
+        }
+    }
+
+    private static func parseFields(_ text: String) -> [String: String] {
+        var out: [String: String] = [:]
+        for token in text.split(separator: " ") {
+            let parts = token.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            out[String(parts[0])] = String(parts[1])
+        }
+        return out
+    }
+
+    @MainActor
+    private static func dispatchPreflight(level: String, check: String, fields: [String: String]) {
+        let state = AppState.shared
+        switch (level, check) {
+        case ("OK", "user.console"):
+            state.resolvedUser = fields["target_user"]
+        case ("OK", "dialog"):
+            state.dialogPresent = true
+        case ("WARN", "dialog.missing"):
+            state.dialogPresent = false
+        case ("FAIL", "user.no_gui_session"):
+            state.preflight = .noGUIUser
+        case ("FAIL", "catalog.missing"):
+            state.preflight = .catalogMissing(path: fields["path"] ?? "")
+        case ("FAIL", "catalog.malformed"):
+            state.preflight = .catalogMalformed(path: fields["path"] ?? "")
+        case ("FAIL", "catalog.empty"):
+            state.preflight = .catalogEmpty(path: fields["path"] ?? "")
+        case ("FAIL", "store.missing"):
+            state.preflight = .wallpaperStoreMissing(path: fields["path"] ?? "")
+        case ("FAIL", "store.schema_changed"):
+            state.preflight = .schemaShifted
+        case ("FAIL", "source"):
+            let provider = fields["provider"] ?? ""
+            state.preflight = provider == "<unset>" ? .wallpaperSourceUnset : .wallpaperSourceWrong(provider: provider)
+        case ("OK", _):
+            // Mirror image of the FAIL above: a fresh OK on the same check
+            // clears a stale FAIL so the banner doesn't linger past recovery.
+            if case .wallpaperSourceWrong = state.preflight, check == "source" { state.preflight = nil }
+            if case .wallpaperSourceUnset = state.preflight, check == "source" { state.preflight = nil }
+            if case .wallpaperStoreMissing = state.preflight, check == "store.exists" { state.preflight = nil }
+            if case .schemaShifted = state.preflight, check == "store.schema" { state.preflight = nil }
+            if case .catalogMissing = state.preflight, check == "catalog" { state.preflight = nil }
+            if case .catalogMalformed = state.preflight, check == "catalog" { state.preflight = nil }
+            if case .catalogEmpty = state.preflight, check == "catalog" { state.preflight = nil }
+        default:
+            break
+        }
     }
 
     /// Interpret a `<title> - <msg>` NOTIFY payload, update AppState, and
@@ -159,6 +249,7 @@ final class LogTailer {
             downloadBannerShown = false
             DispatchQueue.main.async {
                 AppState.shared.progress = nil
+                AppState.shared.preflight = nil   // a successful run clears any prior failure
                 AppState.shared.recordEvent(msg)
                 AppState.shared.refresh()
             }
@@ -172,11 +263,18 @@ final class LogTailer {
 
         } else if title.contains("failed") {             // "Aerial rotate failed"
             downloadBannerShown = false
+            // Peel the optional "code=<token> " prefix the daemon's die() helper
+            // emits so the banner can render a typed FatalBanner. Without code=
+            // we fall through to a generic runtimeError.
+            let (code, detail) = Self.peelCode(msg)
             DispatchQueue.main.async {
                 AppState.shared.progress = nil
-                AppState.shared.recordEvent("Failed: \(msg)")
+                AppState.shared.recordEvent("Failed: \(detail)")
+                if let code = code {
+                    AppState.shared.preflight = .runtimeError(code: code, detail: detail)
+                }
             }
-            if banner { postBanner("Aerial rotate failed", msg) }
+            if banner { postBanner("Aerial rotate failed", detail) }
 
         } else if title.contains("Retrying") {
             DispatchQueue.main.async { AppState.shared.recordEvent("Retrying: \(msg)") }
@@ -205,6 +303,16 @@ final class LogTailer {
             return (String(payload[..<r.lowerBound]), String(payload[r.upperBound...]))
         }
         return (payload, "")
+    }
+
+    /// Split a NOTIFY failed message into (code, detail). die() in the daemon
+    /// emits `code=<token> <detail>` when called with a code= prefix; older log
+    /// lines and uncoded failures return nil for the code.
+    private static func peelCode(_ msg: String) -> (String?, String) {
+        guard msg.hasPrefix("code=") else { return (nil, msg) }
+        let afterCode = msg.dropFirst("code=".count)
+        guard let sp = afterCode.firstIndex(of: " ") else { return (String(afterCode), "") }
+        return (String(afterCode[..<sp]), String(afterCode[afterCode.index(after: sp)...]))
     }
 
     /// First integer immediately preceding `suffix` (e.g. "40" for "40%", "123"
