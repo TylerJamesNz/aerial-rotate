@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 
 /// The handful of sky states the dial actually draws differently. Open-Meteo's
 /// fine-grained WMO weather codes collapse down into these buckets in
@@ -53,11 +54,16 @@ final class WeatherStore {
     private var timer: Timer?
     private let session = URLSession(configuration: .ephemeral)
 
+    /// Precise location source. When it yields a fix we use it; otherwise we fall
+    /// back to the IP geolocation below. Weak: AppDelegate owns the provider.
+    private weak var location: LocationProvider?
+
     /// Re-poll every 20 minutes. Weather drifts slowly and these are courtesy
     /// calls to free services, so there is no reason to hammer them.
     private let interval: TimeInterval = 20 * 60
 
-    func start() {
+    func start(location: LocationProvider? = nil) {
+        self.location = location
         Task { await refresh() }
         let t = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { await self?.refresh() }
@@ -71,12 +77,33 @@ final class WeatherStore {
         timer = nil
     }
 
-    /// One location + conditions round-trip. Any failure (offline, rate-limited,
-    /// shape change) leaves the previously published snapshot untouched.
+    /// One location + conditions round-trip. Prefer a precise CoreLocation fix;
+    /// fall back to IP geolocation when location is denied or no fix arrives in
+    /// time. Any failure (offline, rate-limited, shape change) leaves the
+    /// previously published snapshot untouched.
     func refresh() async {
-        guard let loc = await fetchLocation() else { return }
-        guard let snap = await fetchWeather(lat: loc.lat, lon: loc.lon, place: loc.city) else { return }
+        let lat: Double, lon: Double, place: String?
+        if let coord = await location?.currentCoordinate() {
+            lat = coord.latitude
+            lon = coord.longitude
+            place = await reverseGeocode(coord)   // best-effort city label
+        } else if let ip = await fetchLocation() {
+            lat = ip.lat
+            lon = ip.lon
+            place = ip.city
+        } else {
+            return
+        }
+        guard let snap = await fetchWeather(lat: lat, lon: lon, place: place) else { return }
         await MainActor.run { AppState.shared.weather = snap }
+    }
+
+    /// Turn precise coords into a human city name for the dial label. Best-effort:
+    /// nil on failure, the weather still renders without a place.
+    private func reverseGeocode(_ coord: CLLocationCoordinate2D) async -> String? {
+        let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+        let placemarks = try? await CLGeocoder().reverseGeocodeLocation(loc)
+        return placemarks?.first?.locality
     }
 
     // MARK: - location (IP based)

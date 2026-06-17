@@ -41,6 +41,12 @@ final class AppState: ObservableObject {
     /// successful fetch; the dial draws a plain time-of-day sky in that case.
     @Published var weather: WeatherSnapshot = .unknown
 
+    /// True when Location Services is denied/restricted for the app (or off
+    /// globally), so weather is running on the approximate IP fallback. Drives
+    /// `LocationDisabledBanner`. False while authorized or still undecided, so
+    /// the banner never flashes before the operator answers the prompt.
+    @Published var locationDenied: Bool = false
+
     /// The whole shuffle-eligible catalog (entries.json superset), shown in the
     /// favourites sidebar. Loaded off the main actor in `refresh()`.
     @Published var shufflePool: [ShuffleAsset] = []

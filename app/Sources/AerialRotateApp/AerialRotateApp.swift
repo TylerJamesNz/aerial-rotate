@@ -44,6 +44,7 @@ private struct MenuBarLabel: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let tailer = LogTailer()
     private let weather = WeatherStore()
+    private let location = LocationProvider()   // probe (plan step 1a); strong ref so the CL delegate survives
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // LSUIElement already sets accessory policy; assert it for clarity.
@@ -53,7 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Notifier.shared.bootstrap()
         tailer.start()
         AppState.shared.refresh()
-        weather.start()
+        location.start()                 // request precise location first
+        weather.start(location: location)  // weather prefers the precise fix, falls back to IP
     }
 
     // Agent app: closing the window must not quit it; the menu bar item lives on.
