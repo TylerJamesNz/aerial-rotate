@@ -18,6 +18,12 @@ struct MenuBarContent: View {
             Text(state.lastEvent).font(.caption)
         }
 
+        // Surface the typed preflight failure so the operator sees it without
+        // opening the rich window. Same hook the FatalBanner uses, shorter.
+        if let failure = state.preflight {
+            Text(failure.shortLabel).font(.caption).foregroundStyle(.red)
+        }
+
         Divider()
 
         Button("Open Aerial Rotate") {
