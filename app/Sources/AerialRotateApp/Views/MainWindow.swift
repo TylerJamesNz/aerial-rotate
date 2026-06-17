@@ -36,7 +36,8 @@ struct MainWindow: View {
                         Divider()
                         SunMoonClock()
                     }
-                    .padding(24)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 28)
                     .background(GeometryReader { g in
                         Color.clear
                             .onAppear { leftContentHeight = g.size.height }
@@ -415,7 +416,8 @@ private struct ShufflePoolSidebar: View {
                 }
             }
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 28)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color.primary.opacity(0.03))
     }
