@@ -25,6 +25,7 @@ struct MainWindow: View {
             // Left column: the original window, unchanged.
             VStack(spacing: 0) {
                 WallpaperWarningBanner()    // sticky top alert; renders nothing when not rotating
+                LocationDisabledBanner()    // shows only when Location Services is off; weather on IP fallback
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         CurrentWallpaperCard()
@@ -485,6 +486,41 @@ private struct WallpaperWarningBanner: View {
                     .offset(x: 5, y: -5)
             }
             Text(label).font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Sticky top alert shown only when Location Services is denied/restricted (or off
+/// globally), so the operator knows weather is running on the approximate IP
+/// fallback and how to upgrade it. Renders nothing while authorized or undecided.
+private struct LocationDisabledBanner: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        if state.locationDenied {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "location.slash.fill").foregroundStyle(.orange)
+                    Text("Location is off, weather is approximate").font(.headline)
+                    Spacer()
+                }
+                Text("AerialRotate is using your approximate location from your IP address to fetch weather. Turn on Location Services for AerialRotate to get accurate local conditions on the sky dial.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices") {
+                        NSWorkspace.shared.open(url)
+                    }
+                } label: {
+                    Label("Open Location Services settings", systemImage: "gearshape")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.12))
+            .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.orange.opacity(0.4)), alignment: .bottom)
         }
     }
 }
