@@ -56,10 +56,17 @@ struct SunMoonClock: View {
             // live and preview modes; the preview toggle changes the time mapping inside
             // the dial, not this cadence.
             TimelineView(.periodic(from: .now, by: 0.1)) { ctx in
+                // How deep the time captions stack right now (clustered times bump
+                // down into extra rows) decides how much the card grows below the
+                // timeline. The line and everything above it stay put; only the
+                // bottom extends, one caption-row per extra stacked level.
+                let rowCount = CelestialDial.captionRowCount(times: state.rotationTimes,
+                                                             now: ctx.date, simulating: simulating)
                 CelestialDial(now: ctx.date, times: state.rotationTimes,
                               condition: state.weather.condition, simulating: simulating,
                               fade: precipFade, clouds: cloudField)
-                    .frame(height: 140)
+                    .frame(height: CelestialDial.baseHeight
+                           + CGFloat(max(0, rowCount - 1)) * CelestialDial.captionRowStep)
                     .frame(maxWidth: .infinity)
             }
 
@@ -344,17 +351,17 @@ private struct CelestialDial: View {
             let cx = size.width / 2
             let lineInset: CGFloat = 3   // keep the rounded line ends inside the card edge
             let usable = size.width - 2 * lineInset
-            // Vertically centre the whole stack in the available height. It runs from the
-            // sky icon's glyph top (71pt above the line: 60 to the icon centre + 11 for its
-            // top half) down to the time captions (~25pt below the line), so the stack's
-            // midpoint sits 23pt above the line. Putting that midpoint at the centre leaves
-            // equal space above the icon and below the captions.
-            let lineY = size.height / 2 + 23
+            // The line is anchored a fixed distance from the top, NOT centred, so the
+            // sky icon, now-time and timeline never move as the card grows. Caption
+            // clusters stack downward below the line and the frame height grows to fit
+            // them (see `captionRowCount`), so growth is purely at the bottom. At the
+            // base one-row height (140) this lands exactly where centring used to.
+            let lineY = Self.topToLine
             // Live mode tracks the real time of day. Preview mode races the whole day
             // every ~20s so every phase (night, dawn, noon, dusk) can be eyeballed.
             let nowFrac = simulating
                 ? (now.timeIntervalSinceReferenceDate / 20).truncatingRemainder(dividingBy: 1)
-                : fractionOfDay(now)
+                : Self.fractionOfDay(now)
 
             // Map a clock fraction `sf` (0 = midnight, 0.5 = noon) to an x on the line.
             // The signed offset from now is wrapped to [-0.5, 0.5] (half a day either
@@ -453,14 +460,19 @@ private struct CelestialDial: View {
 
             // Scheduled-time dots ride the line at their offset from now, each captioned
             // just below. They stay a constant grey whatever their distance from "now",
-            // so sliding along the line never changes their colour.
-            for t in times {
+            // so sliding along the line never changes their colour. When two times sit
+            // close together their captions would collide, so each caption is assigned a
+            // row (0 = right under the line) and bumped down a row per `captionRowStep`
+            // until it clears the one before it; the frame grew to fit the deepest row.
+            let rows = Self.captionRows(times: times, now: now, simulating: simulating)
+            for (i, t) in times.enumerated() {
                 let sf = (Double(t.hour) * 60 + Double(t.minute)) / 1440.0
                 let x = xFor(sf)
                 let dot = Path(ellipseIn: CGRect(x: x - 4.5, y: lineY - 4.5, width: 9, height: 9))
                 context.fill(dot, with: .color(Color(white: 0.72)))
                 context.stroke(dot, with: .color(.white.opacity(0.6)), lineWidth: 1.2)
-                let cap = CGPoint(x: min(max(x, 18), size.width - 18), y: lineY + 18)
+                let capY = lineY + 18 + CGFloat(rows[i]) * Self.captionRowStep
+                let cap = CGPoint(x: min(max(x, 18), size.width - 18), y: capY)
                 let label = Text(Format.time12(t))
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.7))
@@ -501,6 +513,64 @@ private struct CelestialDial: View {
                      up: true, color: iconColor, glow: iconColor,
                      glyph: 22, haloR: 18, alwaysLit: true)
         }
+    }
+
+    // MARK: - caption stacking
+
+    /// The card's height with no stacked captions (one caption row under the line).
+    static let baseHeight: CGFloat = 140
+    /// Distance from the card's top down to the timeline; fixed so the icon, now-time
+    /// and line never move when the card grows. Equals `baseHeight / 2 + 23`, the value
+    /// the old centred layout produced at the base height.
+    static let topToLine: CGFloat = 93
+    /// Vertical step a caption drops per stack row, and how much the card grows per
+    /// extra row. Sized to clear one 11pt caption plus a little breathing room.
+    static let captionRowStep: CGFloat = 15
+
+    /// Two captions closer together than this (in fractions of a day, i.e. ~3 hours)
+    /// would visually collide, so the later one is bumped to the next row down.
+    private static let captionMinGap: Double = 3.0 / 24.0
+
+    /// The current time as a fraction of the day (0 = midnight), matching the dial's
+    /// own live/preview mapping so caption rows line up with where dots actually sit.
+    static func nowFraction(_ now: Date, simulating: Bool) -> Double {
+        simulating
+            ? (now.timeIntervalSinceReferenceDate / 20).truncatingRemainder(dividingBy: 1)
+            : fractionOfDay(now)
+    }
+
+    /// Assign each scheduled time a caption row. Times are ordered by their signed
+    /// offset from now (the same left-to-right order they appear on the line, so the
+    /// midnight/now seam is at the far edges and never falsely adjacent). Walking that
+    /// order, each caption takes the topmost row whose last caption sits at least
+    /// `captionMinGap` to its left; otherwise it opens a new row below. A tight cluster
+    /// therefore cascades 0,1,2,... while well-spaced times all stay on row 0.
+    /// Returns one row index per time, in the input order.
+    static func captionRows(times: [RotationTime], now: Date, simulating: Bool) -> [Int] {
+        let nf = nowFraction(now, simulating: simulating)
+        func offset(_ t: RotationTime) -> Double {
+            var o = (Double(t.hour) * 60 + Double(t.minute)) / 1440.0 - nf
+            o -= o.rounded()
+            return o
+        }
+        let order = times.indices.sorted { offset(times[$0]) < offset(times[$1]) }
+        var rowOf = [Int](repeating: 0, count: times.count)
+        var lastInRow: [Double] = []   // offset of the last caption placed in each row
+        for i in order {
+            let o = offset(times[i])
+            var placed = false
+            for r in lastInRow.indices where o - lastInRow[r] >= captionMinGap {
+                rowOf[i] = r; lastInRow[r] = o; placed = true; break
+            }
+            if !placed { rowOf[i] = lastInRow.count; lastInRow.append(o) }
+        }
+        return rowOf
+    }
+
+    /// How many caption rows the current schedule needs (>= 1), so the parent can grow
+    /// the card's frame to fit the deepest stack.
+    static func captionRowCount(times: [RotationTime], now: Date, simulating: Bool) -> Int {
+        (captionRows(times: times, now: now, simulating: simulating).max() ?? 0) + 1
     }
 
     // MARK: - colour
@@ -558,7 +628,7 @@ private struct CelestialDial: View {
     // MARK: - geometry
 
     /// Fraction of the day in [0,1); 0 = 00:00, 0.5 = noon.
-    private func fractionOfDay(_ date: Date) -> Double {
+    static func fractionOfDay(_ date: Date) -> Double {
         let c = Calendar.current.dateComponents([.hour, .minute], from: date)
         return Double((c.hour ?? 0) * 60 + (c.minute ?? 0)) / 1440.0
     }
