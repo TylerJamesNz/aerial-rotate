@@ -24,7 +24,7 @@ struct MainWindow: View {
         HStack(alignment: .top, spacing: 0) {
             // Left column: the original window, unchanged.
             VStack(spacing: 0) {
-                WallpaperWarningBanner()    // sticky top alert; renders nothing when not rotating
+                PreflightBannerStack()      // typed daemon health banners (fatal red / shuffle orange / dialog-missing info); each renders nothing when its condition is clear
                 LocationDisabledBanner()    // shows only when Location Services is off; weather on IP fallback
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
@@ -424,54 +424,160 @@ private struct ShufflePoolSidebar: View {
     }
 }
 
-// MARK: - wallpaper-setting warning overlay
+// MARK: - daemon health banner stack
 
-/// Shown when macOS is auto-downloading aerials, i.e. the wallpaper is still on a
-/// shuffle/rotating aerial source. Guides the operator to pin a single aerial and
-/// deep-links to the Wallpaper settings pane.
-///
-/// Detection is symptom-based for now (cache count): the Shuffle-dict signal
-/// proved unreliable this session (downloads continued with the Shuffle dict
-/// removed), and the count is the dependable tell. Refine with a plist-setting
-/// read once the single-aerial UI signature is captured (see handoff amber-meridian).
-private struct WallpaperWarningBanner: View {
+/// Top-of-window banner stack that surfaces every daemon-detected problem in
+/// one visually contiguous alert region. Banners stack top-down: fatal red
+/// (preflight or rotation failure) → orange (rotating-shuffle is on) → info
+/// (swiftDialog missing). Each renders nothing when its own condition is clear,
+/// so a healthy machine sees no banner at all.
+private struct PreflightBannerStack: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        if state.rotating {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text("Rotating aerials are on").font(.headline)
-                    Spacer()
-                }
-                Text("macOS keeps downloading the whole catalog (\(state.snapshot.items.count) videos, \(Format.bytes(state.snapshot.totalBytes)) on disk) while the wallpaper is set to Shuffle. Pin a single aerial to stop it.")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 12) {
-                    settingChip(icon: "arrow.triangle.2.circlepath", label: "Shuffle", good: false)
-                    Image(systemName: "arrow.right").foregroundStyle(.secondary)
-                    settingChip(icon: "photo.fill", label: "Single aerial", good: true)
-                    Spacer()
-                }
-                Button {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension") {
-                        NSWorkspace.shared.open(url)
-                    }
-                } label: {
-                    Label("Fix this, open Wallpaper Settings", systemImage: "gearshape")
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
+        VStack(spacing: 0) {
+            if let failure = state.preflight { FatalBanner(failure: failure) }
+            if state.rotating { RotatingShuffleBanner() }
+            if !state.dialogPresent { DialogMissingInfoBanner() }
+            // The thumbnails-still-arriving banner sits at the bottom of the
+            // stack so a fatal preflight banner (red) is never pushed off the
+            // visible area by a transient blue info banner.
+            if let progress = state.thumbnailFetchProgress, progress.loaded < progress.total {
+                ThumbnailsLoadingInfoBanner(progress: progress)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.12))
-            .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.orange.opacity(0.4)), alignment: .bottom)
+        }
+    }
+}
+
+/// Red banner: the daemon's most recent run hit a preflight failure (or a
+/// rotation-time abort with a code= tag). One row of copy + a typed CTA. Each
+/// case in PreflightFailure has its own title + body + button label here.
+private struct FatalBanner: View {
+    let failure: PreflightFailure
+
+    var body: some View {
+        let copy = copyFor(failure)
+        BannerCard(
+            tint: .red,
+            icon: "exclamationmark.octagon.fill",
+            title: copy.title,
+            message: copy.message,
+            cta: copy.cta
+        )
+    }
+
+    private struct Copy {
+        var title: String
+        var message: String
+        var cta: BannerCTA?
+    }
+
+    private func copyFor(_ f: PreflightFailure) -> Copy {
+        switch f {
+        case .noGUIUser:
+            return Copy(
+                title: "No active user session",
+                message: "Nobody was logged in when the rotation tried to run. It will retry on the next trigger after you log in.",
+                cta: nil)
+        case .catalogMissing(let path):
+            return Copy(
+                title: "Aerial catalog not found",
+                message: "macOS hasn't downloaded entries.json yet at \(path). Open Wallpaper Settings, pick an Aerial once, then Refresh.",
+                cta: .wallpaperSettings)
+        case .catalogMalformed(let path):
+            return Copy(
+                title: "Aerial catalog is unreadable",
+                message: "entries.json at \(path) failed to parse. Try toggling the aerial in Wallpaper Settings to make macOS rewrite it.",
+                cta: .wallpaperSettings)
+        case .catalogEmpty(let path):
+            return Copy(
+                title: "Aerial catalog is empty",
+                message: "entries.json at \(path) has no aerials. Open Wallpaper Settings and re-pick an aerial so macOS repopulates it.",
+                cta: .wallpaperSettings)
+        case .wallpaperStoreMissing(let path):
+            return Copy(
+                title: "Wallpaper store missing",
+                message: "Couldn't find Index.plist at \(path). Pick a wallpaper once in Wallpaper Settings to create it.",
+                cta: .wallpaperSettings)
+        case .schemaShifted:
+            return Copy(
+                title: "macOS upgraded, schema changed",
+                message: "Apple changed the Index.plist key paths. AerialRotate needs an update before it can pin an aerial.",
+                cta: nil)
+        case .wallpaperSourceWrong(let provider):
+            return Copy(
+                title: "Wallpaper source isn't Aerial",
+                message: "Your wallpaper source is \(humanizeProvider(provider)). AerialRotate only rotates while the source is Aerial. Switch in Wallpaper Settings.",
+                cta: .wallpaperSettings)
+        case .wallpaperSourceUnset:
+            return Copy(
+                title: "Wallpaper source not set",
+                message: "macOS hasn't recorded a wallpaper source yet. Open Wallpaper Settings and pick an Aerial once.",
+                cta: .wallpaperSettings)
+        case .downloadFailed:
+            return Copy(
+                title: "Aerial download failed",
+                message: "The new aerial couldn't be downloaded after two tries. The previous aerial is still on the wallpaper. The next trigger will retry.",
+                cta: nil)
+        case .runtimeError(let code, let detail):
+            return Copy(
+                title: "Rotation failed (\(code))",
+                message: detail,
+                cta: nil)
         }
     }
 
-    /// Small before/after swatch: the bad (Shuffle, red ✗) and good (Single, green ✓) states.
+    private func humanizeProvider(_ provider: String) -> String {
+        switch provider {
+        case "com.apple.wallpaper.choice.landscape": return "Landscape"
+        case "com.apple.wallpaper.choice.plants": return "Plants"
+        case "com.apple.wallpaper.choice.photos", "com.apple.wallpaper.choice.album": return "Photos"
+        case "com.apple.wallpaper.choice.dynamic": return "Dynamic"
+        case "com.apple.wallpaper.choice.dark-mode": return "Light & Dark"
+        case "default": return "the macOS default (no source picked)"
+        default: return provider
+        }
+    }
+}
+
+/// Orange banner: macOS is auto-downloading aerials because the wallpaper is on
+/// a shuffle/rotating source. Extracted from the prior WallpaperWarningBanner so
+/// the stack can render it alongside fatal preflight banners.
+private struct RotatingShuffleBanner: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text("Rotating aerials are on").font(.headline)
+                Spacer()
+            }
+            Text("macOS keeps downloading the whole catalog (\(state.snapshot.items.count) videos, \(Format.bytes(state.snapshot.totalBytes)) on disk) while the wallpaper is set to Shuffle. Pin a single aerial to stop it.")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                settingChip(icon: "arrow.triangle.2.circlepath", label: "Shuffle", good: false)
+                Image(systemName: "arrow.right").foregroundStyle(.secondary)
+                settingChip(icon: "photo.fill", label: "Single aerial", good: true)
+                Spacer()
+            }
+            Button {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension") {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                Label("Fix this, open Wallpaper Settings", systemImage: "gearshape")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.12))
+        .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.orange.opacity(0.4)), alignment: .bottom)
+    }
+
     private func settingChip(icon: String, label: String, good: Bool) -> some View {
         VStack(spacing: 4) {
             ZStack(alignment: .topTrailing) {
@@ -487,6 +593,96 @@ private struct WallpaperWarningBanner: View {
             }
             Text(label).font(.caption2).foregroundStyle(.secondary)
         }
+    }
+}
+
+/// Blue/info banner: refresh-driven thumbnail batch is still fetching from
+/// Apple's CDN. Sits in the same banner region as preflight/permission
+/// failures because that's where the operator looks for "is this app doing
+/// something" — but framed accurately as "load in progress", not "broken".
+/// Clears automatically when `loaded == total` (AppState sets
+/// `thumbnailFetchProgress` back to nil in the same MainActor hop).
+private struct ThumbnailsLoadingInfoBanner: View {
+    let progress: ThumbnailFetchProgress
+
+    var body: some View {
+        BannerCard(
+            tint: .blue,
+            icon: "arrow.down.circle",
+            title: "Loading aerial previews",
+            message: "Showing \(progress.loaded) of \(progress.total) aerial previews from Apple. The rest fill in as they arrive, no action needed.",
+            cta: nil
+        )
+    }
+}
+
+/// Blue/info banner: swiftDialog isn't installed, so daemon-side Notification
+/// Center banners are off. The app's own user-session Notifier still works.
+private struct DialogMissingInfoBanner: View {
+    var body: some View {
+        BannerCard(
+            tint: .blue,
+            icon: "bell.slash.fill",
+            title: "Daemon banners are off",
+            message: "swiftDialog isn't installed, so the daemon can't post Notification Center banners during a rotation. The app's banners still work. Re-run install.sh to add swiftDialog.",
+            cta: nil
+        )
+    }
+}
+
+/// Where a banner's primary button should take the operator. Keeps the deep-link
+/// URL out of the per-case copy block.
+private enum BannerCTA: Equatable {
+    case wallpaperSettings
+
+    var label: String {
+        switch self {
+        case .wallpaperSettings: return "Open Wallpaper Settings"
+        }
+    }
+
+    var url: URL? {
+        switch self {
+        case .wallpaperSettings: return URL(string: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension")
+        }
+    }
+}
+
+/// Shared banner chrome: icon + title row, body, optional CTA. Tint drives the
+/// background tinting and bottom-edge rule so the family reads as one alert
+/// region when stacked. `message` instead of `body` because `body` collides
+/// with SwiftUI's View protocol requirement.
+private struct BannerCard: View {
+    let tint: Color
+    let icon: String
+    let title: String
+    let message: String
+    let cta: BannerCTA?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).foregroundStyle(tint)
+                Text(title).font(.headline)
+                Spacer()
+            }
+            Text(message)
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let cta {
+                Button {
+                    if let url = cta.url { NSWorkspace.shared.open(url) }
+                } label: {
+                    Label(cta.label, systemImage: "gearshape")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(tint)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.12))
+        .overlay(Rectangle().frame(height: 1).foregroundStyle(tint.opacity(0.4)), alignment: .bottom)
     }
 }
 
@@ -527,9 +723,11 @@ private struct LocationDisabledBanner: View {
 
 // MARK: - thumbnail
 
-/// 16:9 preview for a cached aerial, loaded from the local idleassetsd snapshot
-/// JPEG (no network). Decoded once per id and memoised so the 5s auto-refresh
-/// doesn't re-read disk.
+/// 16:9 preview for a cached aerial. Resolution goes through `ThumbnailCache`'s
+/// memory → idleassetsd snapshot → app-owned disk cache → CDN tiers; the local
+/// tiers (1-3) return synchronously-cheap so the per-row `.task` is the
+/// fallback for "operator scrolled to a row the refresh-driven batch hasn't
+/// fetched yet". The cache memoises so the 5s auto-refresh doesn't re-read disk.
 private struct AerialThumbnail: View {
     let id: String
     @State private var image: NSImage?
@@ -545,21 +743,7 @@ private struct AerialThumbnail: View {
         }
         .frame(width: 64, height: 36)
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .task(id: id) { image = ThumbnailCache.image(for: id) }
-    }
-}
-
-/// Memoised loader for the local asset-preview JPEGs.
-private enum ThumbnailCache {
-    private static var mem: [String: NSImage] = [:]
-
-    static func image(for id: String) -> NSImage? {
-        if let hit = mem[id] { return hit }
-        let path = Config.previewImagePath(for: id)
-        guard FileManager.default.fileExists(atPath: path),
-              let img = NSImage(contentsOfFile: path) else { return nil }
-        mem[id] = img
-        return img
+        .task(id: id) { image = await ThumbnailCache.image(for: id) }
     }
 }
 

@@ -10,6 +10,48 @@ struct DownloadProgress: Equatable {
     var assetID: String?
 }
 
+/// Why the daemon decided it can't rotate, surfaced as a typed banner in the
+/// main window's banner stack. `nil` on AppState means healthy. The
+/// LogTailer derives this from `PREFLIGHT: FAIL ...` lines and the existing
+/// `NOTIFY: Aerial rotate failed - code=<x> ...` channel; `applied` clears it.
+enum PreflightFailure: Equatable {
+    case noGUIUser
+    case catalogMissing(path: String)
+    case catalogMalformed(path: String)
+    case catalogEmpty(path: String)
+    case wallpaperStoreMissing(path: String)
+    case schemaShifted
+    case wallpaperSourceWrong(provider: String)
+    case wallpaperSourceUnset
+    case downloadFailed
+    case runtimeError(code: String, detail: String)
+
+    /// Two-word menu-bar label for the dropdown line under `lastEvent`.
+    var shortLabel: String {
+        switch self {
+        case .noGUIUser:                return "no active user session"
+        case .catalogMissing:           return "aerial catalog missing"
+        case .catalogMalformed:         return "aerial catalog malformed"
+        case .catalogEmpty:             return "aerial catalog empty"
+        case .wallpaperStoreMissing:    return "wallpaper store missing"
+        case .schemaShifted:            return "wallpaper schema shifted"
+        case .wallpaperSourceWrong:     return "wallpaper source isn't Aerial"
+        case .wallpaperSourceUnset:     return "wallpaper source not set"
+        case .downloadFailed:           return "download failed"
+        case .runtimeError(let code, _): return "rotation failed (\(code))"
+        }
+    }
+}
+
+/// Live count for the "thumbnails still arriving" info banner — non-nil only
+/// while a refresh-driven batch is in flight. The banner reads this directly;
+/// AppState clears it back to nil the same MainActor hop that publishes the
+/// final progress, so the banner disappears the moment `loaded == total`.
+struct ThumbnailFetchProgress: Equatable {
+    var loaded: Int
+    var total: Int
+}
+
 /// One scheduled daily rotation time. The list of these is the source of truth
 /// for the schedule; each maps to a `{Hour, Minute}` dict in the agent plist's
 /// `StartCalendarInterval` array. Identifiable so SwiftUI can diff editor rows
@@ -47,9 +89,36 @@ final class AppState: ObservableObject {
     /// the banner never flashes before the operator answers the prompt.
     @Published var locationDenied: Bool = false
 
+    /// Set when the daemon's most recent run hit a preflight failure (or a
+    /// rotation-time failure with a code= tag). `nil` means healthy. Cleared
+    /// when the LogTailer sees the next `NOTIFY: ✅ New wallpaper applied`.
+    @Published var preflight: PreflightFailure?
+
+    /// False when the daemon's last preflight noted `WARN dialog.missing`. The
+    /// app's user-session Notifier is the real banner channel, so this is
+    /// informational — surfaces a soft "install swiftDialog for daemon-side
+    /// notifications" hint, not a blocker.
+    @Published var dialogPresent: Bool = true
+
+    /// The console user the daemon resolved on its last run, surfaced in the
+    /// dropdown to help diagnose multi-user / no-GUI-user scenarios. nil until
+    /// the LogTailer parses the first `PREFLIGHT: OK user.console ...` line.
+    @Published var resolvedUser: String?
+
     /// The whole shuffle-eligible catalog (entries.json superset), shown in the
     /// favourites sidebar. Loaded off the main actor in `refresh()`.
     @Published var shufflePool: [ShuffleAsset] = []
+
+    /// Non-nil while a refresh-driven thumbnail batch is in flight. Drives the
+    /// blue `ThumbnailsLoadingInfoBanner` in the banner stack; cleared in the
+    /// same MainActor hop that publishes the final progress so the banner
+    /// disappears the moment `loaded == total`.
+    @Published var thumbnailFetchProgress: ThumbnailFetchProgress?
+
+    /// Re-entrancy guard for the batch loader. The 5s auto-refresh fires
+    /// `refresh()` independent of whether a previous batch has finished, so
+    /// without this a slow CDN run would spawn parallel batches.
+    private var thumbnailBatchInFlight = false
 
     /// Curated shuffle favourites. EMPTY is the "all" sentinel: zero curated
     /// means the daemon shuffles the whole pool, and every sidebar row reads as
@@ -78,6 +147,9 @@ final class AppState: ObservableObject {
     func requestOpenWindow() { openWindowRequests &+= 1 }
 
     /// Re-read cache + current wallpaper + schedule off the main actor, then publish.
+    /// After publishing the shuffle pool, kicks off the thumbnail-batch loader
+    /// (`refreshMissingThumbnails`) so the operator sees pool rows fill in
+    /// instead of grey placeholders.
     func refresh() {
         Task.detached(priority: .utility) {
             let currentID = WallpaperStore.currentAssetID()
@@ -117,6 +189,54 @@ final class AppState: ObservableObject {
                         zip(current, incoming).allSatisfy { $0.hour == $1.hour && $0.minute == $1.minute }
                     if !unchanged { self.rotationTimes = incoming }
                 }
+                self.refreshMissingThumbnails(pool: pool)
+            }
+        }
+    }
+
+    /// Diff the loaded pool against the thumbnail cache and serially fetch any
+    /// id whose preview is missing from all three local tiers. Runs one batch
+    /// at a time (re-entrant calls return immediately), serially through
+    /// `URLSession.shared` to stay polite to Apple's CDN. Drives the blue
+    /// "thumbnails still arriving" info banner via `thumbnailFetchProgress`.
+    ///
+    /// The flag is set *synchronously* on MainActor before the detached task
+    /// spawns, because cold-launch fires three near-simultaneous refresh()
+    /// calls (AppDelegate, MainWindow.onAppear, the 5s Timer's first tick on
+    /// re-raise); leaving the guard inside the detached task lets all three
+    /// pass the check before any sets the flag.
+    func refreshMissingThumbnails(pool: [ShuffleAsset]) {
+        guard !thumbnailBatchInFlight else { return }
+        thumbnailBatchInFlight = true
+        let poolIDs = pool.map(\.id)
+        let total = poolIDs.count
+        Task.detached(priority: .utility) {
+            let missing = await ThumbnailCache.missingIDs(in: poolIDs)
+            guard !missing.isEmpty else {
+                await MainActor.run { self.thumbnailBatchInFlight = false }
+                return
+            }
+            await MainActor.run {
+                self.thumbnailFetchProgress = ThumbnailFetchProgress(loaded: 0, total: total)
+            }
+            ThumbnailCache.logBatchStart(missing: missing.count, total: total)
+            let start = Date()
+            let alreadyCached = total - missing.count
+            var loaded = alreadyCached
+            var failed = 0
+            for id in missing {
+                let img = await ThumbnailCache.image(for: id)
+                if img != nil { loaded += 1 } else { failed += 1 }
+                let snapLoaded = loaded
+                await MainActor.run {
+                    self.thumbnailFetchProgress = ThumbnailFetchProgress(loaded: snapLoaded, total: total)
+                }
+            }
+            let elapsed = Date().timeIntervalSince(start)
+            ThumbnailCache.logBatchEnd(loaded: loaded - alreadyCached, failed: failed, elapsedSec: elapsed)
+            await MainActor.run {
+                self.thumbnailFetchProgress = nil
+                self.thumbnailBatchInFlight = false
             }
         }
     }
