@@ -587,9 +587,11 @@ private struct CelestialDial: View {
     /// phase boundaries while its halo/tint and the card behind it glide.
     /// The centre glyph. `.clear`/`.unknown` keep the warm time-of-day icons (dawn,
     /// day, sunset, night) so a clear sky and the no-data default look exactly as
-    /// before. Cloud/precip conditions swap to a cool grey-white glyph nudged per
-    /// condition, with a day/night sense for the partly-cloudy variant. Colours live
-    /// in one small table here so they are tunable at smoke time.
+    /// before. Every cloud/precip condition ALWAYS carries a sun (day) or moon
+    /// (night) behind the cloud, never a bare cloud, so the glyph still reads as
+    /// day-vs-night; the atmosphere particles behind it carry the precip meaning
+    /// (snow dots, rain streaks) and fog reads from the sky tint. Colours live in
+    /// one small table here so they are tunable at smoke time.
     private func skyIcon(_ f: Double, _ condition: SkyCondition) -> (String, Color) {
         // "Lit" through dawn/day/sunset (0.22..<0.83), night otherwise. Reuses the
         // same boundaries the clear-sky buckets below use.
@@ -609,15 +611,28 @@ private struct CelestialDial: View {
                 ? ("cloud.sun.fill", Color(red: 0.92, green: 0.88, blue: 0.78))
                 : ("cloud.moon.fill", Color(red: 0.82, green: 0.84, blue: 0.90))
         case .cloudy:
-            return ("cloud.fill", Color(white: 0.85))                                             // neutral grey-white
+            // Always a sun (day) or moon (night) behind the cloud, never a bare cloud.
+            return lit
+                ? ("cloud.sun.fill", Color(red: 0.93, green: 0.89, blue: 0.80))                    // warm sun behind grey
+                : ("cloud.moon.fill", Color(white: 0.85))                                          // neutral grey-white
         case .fog:
-            return ("cloud.fog.fill", Color(white: 0.82))                                         // neutral grey-white
+            // No sun/moon fog symbol exists; the sky tint conveys fog, glyph keeps sun/moon.
+            return lit
+                ? ("cloud.sun.fill", Color(red: 0.90, green: 0.87, blue: 0.80))                    // warm-grey, soft
+                : ("cloud.moon.fill", Color(white: 0.82))                                          // neutral grey-white
         case .rain:
-            return ("cloud.rain.fill", Color(red: 0.70, green: 0.78, blue: 0.88))                 // cool blue-grey
+            return lit
+                ? ("cloud.sun.rain.fill", Color(red: 0.82, green: 0.83, blue: 0.82))               // cool grey, warm sun
+                : ("cloud.moon.rain.fill", Color(red: 0.70, green: 0.78, blue: 0.88))              // cool blue-grey
         case .snow:
-            return ("cloud.snow.fill", Color(white: 0.96))                                        // bright near-white
+            // No sun/moon snow symbol exists; snow dots behind carry the precip meaning.
+            return lit
+                ? ("cloud.sun.fill", Color(red: 0.96, green: 0.95, blue: 0.92))                    // bright, warm
+                : ("cloud.moon.fill", Color(white: 0.96))                                          // bright near-white
         case .thunder:
-            return ("cloud.bolt.rain.fill", Color(red: 0.62, green: 0.66, blue: 0.74))            // darker slate
+            return lit
+                ? ("cloud.sun.bolt.fill", Color(red: 0.78, green: 0.78, blue: 0.78))               // slate, warm sun
+                : ("cloud.moon.bolt.fill", Color(red: 0.62, green: 0.66, blue: 0.74))              // darker slate
         }
     }
 
