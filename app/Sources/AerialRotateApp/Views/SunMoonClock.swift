@@ -56,17 +56,10 @@ struct SunMoonClock: View {
             // live and preview modes; the preview toggle changes the time mapping inside
             // the dial, not this cadence.
             TimelineView(.periodic(from: .now, by: 0.1)) { ctx in
-                // How deep the time captions stack right now (clustered times bump
-                // down into extra rows) decides how much the card grows below the
-                // timeline. The line and everything above it stay put; only the
-                // bottom extends, one caption-row per extra stacked level.
-                let rowCount = CelestialDial.captionRowCount(times: state.rotationTimes,
-                                                             now: ctx.date, simulating: simulating)
                 CelestialDial(now: ctx.date, times: state.rotationTimes,
                               condition: state.weather.condition, simulating: simulating,
                               fade: precipFade, clouds: cloudField)
-                    .frame(height: CelestialDial.baseHeight
-                           + CGFloat(max(0, rowCount - 1)) * CelestialDial.captionRowStep)
+                    .frame(height: CelestialDial.baseHeight)
                     .frame(maxWidth: .infinity)
             }
 
@@ -458,34 +451,17 @@ private struct CelestialDial: View {
                                lineWidth: cardinal ? 1.4 : 1)
             }
 
-            // Scheduled-time dots ride the line at their offset from now, each captioned
-            // just below. They stay a constant grey whatever their distance from "now",
-            // so sliding along the line never changes their colour. When two times sit
-            // close together their captions would collide, so each caption is assigned a
-            // row (0 = right under the line) and bumped down a row per `captionRowStep`
-            // until it clears the one before it; the frame grew to fit the deepest row.
-            let rows = Self.captionRows(times: times, now: now, simulating: simulating)
-            for (i, t) in times.enumerated() {
+            // Scheduled-time dots ride the line at their offset from now. They stay a
+            // constant grey whatever their distance from "now", so sliding along the line
+            // never changes their colour. The dots carry no captions: the exact times are
+            // listed on the row inputs below the dial, so labelling them here only
+            // duplicated that and crowded the card.
+            for t in times {
                 let sf = (Double(t.hour) * 60 + Double(t.minute)) / 1440.0
                 let x = xFor(sf)
                 let dot = Path(ellipseIn: CGRect(x: x - 4.5, y: lineY - 4.5, width: 9, height: 9))
                 context.fill(dot, with: .color(Color(white: 0.72)))
                 context.stroke(dot, with: .color(.white.opacity(0.6)), lineWidth: 1.2)
-                let capY = lineY + 18 + CGFloat(rows[i]) * Self.captionRowStep
-                // Anchor edge captions to the card edge instead of centring then
-                // clipping: flush-left near the left edge, flush-right near the right,
-                // centred elsewhere, so the full "12:00AM" always stays on the card.
-                let halfW: CGFloat = 24   // ~half a "12:00AM" at 11pt monospaced
-                let inset: CGFloat = 6
-                let anchor: UnitPoint
-                let capX: CGFloat
-                if x - halfW < inset { anchor = .leading; capX = inset }
-                else if x + halfW > size.width - inset { anchor = .trailing; capX = size.width - inset }
-                else { anchor = .center; capX = x }
-                let label = Text(Format.time12(t))
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.7))
-                context.draw(label, at: CGPoint(x: capX, y: capY), anchor: anchor)
             }
 
             // The fixed "now" marker: a bold white notch through the centre of the
@@ -524,63 +500,14 @@ private struct CelestialDial: View {
         }
     }
 
-    // MARK: - caption stacking
+    // MARK: - layout
 
-    /// The card's height with no stacked captions (one caption row under the line).
+    /// The dial card's fixed height.
     static let baseHeight: CGFloat = 140
-    /// Distance from the card's top down to the timeline; fixed so the icon, now-time
-    /// and line never move when the card grows. Equals `baseHeight / 2 + 23`, the value
-    /// the old centred layout produced at the base height.
+    /// Distance from the card's top down to the timeline. Anchored rather than centred
+    /// so the sky icon, now-time and line keep a stable position; equals the centred
+    /// value (`baseHeight / 2 + 23`) at the base height.
     static let topToLine: CGFloat = 93
-    /// Vertical step a caption drops per stack row, and how much the card grows per
-    /// extra row. Sized to clear one 11pt caption plus a little breathing room.
-    static let captionRowStep: CGFloat = 15
-
-    /// Two captions closer together than this (in fractions of a day, i.e. ~3 hours)
-    /// would visually collide, so the later one is bumped to the next row down.
-    private static let captionMinGap: Double = 3.0 / 24.0
-
-    /// The current time as a fraction of the day (0 = midnight), matching the dial's
-    /// own live/preview mapping so caption rows line up with where dots actually sit.
-    static func nowFraction(_ now: Date, simulating: Bool) -> Double {
-        simulating
-            ? (now.timeIntervalSinceReferenceDate / 20).truncatingRemainder(dividingBy: 1)
-            : fractionOfDay(now)
-    }
-
-    /// Assign each scheduled time a caption row. Times are ordered by their signed
-    /// offset from now (the same left-to-right order they appear on the line, so the
-    /// midnight/now seam is at the far edges and never falsely adjacent). Walking that
-    /// order, each caption takes the topmost row whose last caption sits at least
-    /// `captionMinGap` to its left; otherwise it opens a new row below. A tight cluster
-    /// therefore cascades 0,1,2,... while well-spaced times all stay on row 0.
-    /// Returns one row index per time, in the input order.
-    static func captionRows(times: [RotationTime], now: Date, simulating: Bool) -> [Int] {
-        let nf = nowFraction(now, simulating: simulating)
-        func offset(_ t: RotationTime) -> Double {
-            var o = (Double(t.hour) * 60 + Double(t.minute)) / 1440.0 - nf
-            o -= o.rounded()
-            return o
-        }
-        let order = times.indices.sorted { offset(times[$0]) < offset(times[$1]) }
-        var rowOf = [Int](repeating: 0, count: times.count)
-        var lastInRow: [Double] = []   // offset of the last caption placed in each row
-        for i in order {
-            let o = offset(times[i])
-            var placed = false
-            for r in lastInRow.indices where o - lastInRow[r] >= captionMinGap {
-                rowOf[i] = r; lastInRow[r] = o; placed = true; break
-            }
-            if !placed { rowOf[i] = lastInRow.count; lastInRow.append(o) }
-        }
-        return rowOf
-    }
-
-    /// How many caption rows the current schedule needs (>= 1), so the parent can grow
-    /// the card's frame to fit the deepest stack.
-    static func captionRowCount(times: [RotationTime], now: Date, simulating: Bool) -> Int {
-        (captionRows(times: times, now: now, simulating: simulating).max() ?? 0) + 1
-    }
 
     // MARK: - colour
 
