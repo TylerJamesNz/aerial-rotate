@@ -439,6 +439,12 @@ private struct PreflightBannerStack: View {
             if let failure = state.preflight { FatalBanner(failure: failure) }
             if state.rotating { RotatingShuffleBanner() }
             if !state.dialogPresent { DialogMissingInfoBanner() }
+            // The thumbnails-still-arriving banner sits at the bottom of the
+            // stack so a fatal preflight banner (red) is never pushed off the
+            // visible area by a transient blue info banner.
+            if let progress = state.thumbnailFetchProgress, progress.loaded < progress.total {
+                ThumbnailsLoadingInfoBanner(progress: progress)
+            }
         }
     }
 }
@@ -590,6 +596,26 @@ private struct RotatingShuffleBanner: View {
     }
 }
 
+/// Blue/info banner: refresh-driven thumbnail batch is still fetching from
+/// Apple's CDN. Sits in the same banner region as preflight/permission
+/// failures because that's where the operator looks for "is this app doing
+/// something" — but framed accurately as "load in progress", not "broken".
+/// Clears automatically when `loaded == total` (AppState sets
+/// `thumbnailFetchProgress` back to nil in the same MainActor hop).
+private struct ThumbnailsLoadingInfoBanner: View {
+    let progress: ThumbnailFetchProgress
+
+    var body: some View {
+        BannerCard(
+            tint: .blue,
+            icon: "arrow.down.circle",
+            title: "Loading aerial previews",
+            message: "Showing \(progress.loaded) of \(progress.total) aerial previews from Apple. The rest fill in as they arrive, no action needed.",
+            cta: nil
+        )
+    }
+}
+
 /// Blue/info banner: swiftDialog isn't installed, so daemon-side Notification
 /// Center banners are off. The app's own user-session Notifier still works.
 private struct DialogMissingInfoBanner: View {
@@ -697,9 +723,11 @@ private struct LocationDisabledBanner: View {
 
 // MARK: - thumbnail
 
-/// 16:9 preview for a cached aerial, loaded from the local idleassetsd snapshot
-/// JPEG (no network). Decoded once per id and memoised so the 5s auto-refresh
-/// doesn't re-read disk.
+/// 16:9 preview for a cached aerial. Resolution goes through `ThumbnailCache`'s
+/// memory → idleassetsd snapshot → app-owned disk cache → CDN tiers; the local
+/// tiers (1-3) return synchronously-cheap so the per-row `.task` is the
+/// fallback for "operator scrolled to a row the refresh-driven batch hasn't
+/// fetched yet". The cache memoises so the 5s auto-refresh doesn't re-read disk.
 private struct AerialThumbnail: View {
     let id: String
     @State private var image: NSImage?
@@ -715,21 +743,7 @@ private struct AerialThumbnail: View {
         }
         .frame(width: 64, height: 36)
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .task(id: id) { image = ThumbnailCache.image(for: id) }
-    }
-}
-
-/// Memoised loader for the local asset-preview JPEGs.
-private enum ThumbnailCache {
-    private static var mem: [String: NSImage] = [:]
-
-    static func image(for id: String) -> NSImage? {
-        if let hit = mem[id] { return hit }
-        let path = Config.previewImagePath(for: id)
-        guard FileManager.default.fileExists(atPath: path),
-              let img = NSImage(contentsOfFile: path) else { return nil }
-        mem[id] = img
-        return img
+        .task(id: id) { image = await ThumbnailCache.image(for: id) }
     }
 }
 

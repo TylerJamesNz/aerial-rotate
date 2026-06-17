@@ -58,4 +58,24 @@ enum Config {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return home + "/Library/Application Support/aerial-rotate/shuffle-favourites.json"
     }
+
+    /// App-owned cache for aerial thumbnails the OS's idleassetsd never
+    /// generated under `snapshotsDir`. `ThumbnailCache` writes PNG bytes
+    /// fetched from Apple's CDN here; world-readable, user-owned, lives next
+    /// to `favouritesStore`. The dir is created lazily on first write.
+    static var thumbnailCacheDir: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return home + "/Library/Application Support/aerial-rotate/thumbnails"
+    }
+    static func cachedThumbnailPath(for id: String) -> String {
+        thumbnailCacheDir + "/\(id).png"
+    }
+
+    /// Parallel to the daemon's `/var/log/aerial-rotate.log` but app-side and
+    /// user-owned, so an operator can `tail -F` thumbnail fetches without
+    /// launching Console.app. Truncated when it grows past ~1 MB.
+    static var thumbnailLog: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return home + "/Library/Application Support/aerial-rotate/thumbnails.log"
+    }
 }
