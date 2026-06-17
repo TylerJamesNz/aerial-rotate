@@ -67,17 +67,23 @@ enum CacheModel {
         return CacheSnapshot(totalBytes: total, currentID: currentID, currentBytes: currentBytes, items: items)
     }
 
-    /// `(hour, minute)` the rotation is scheduled for, read from the user
+    /// Every `(hour, minute)` the rotation is scheduled for, read from the user
     /// LaunchAgent plist (the agent owns the schedule and touches the trigger;
     /// the root daemon just watches the trigger, so it no longer holds the time).
-    static func rotationTime() -> (hour: Int, minute: Int)? {
+    ///
+    /// `StartCalendarInterval` is either an **array** of dicts (multi-time, what
+    /// the app writes once edited) or a **single dict** (the legacy / freshly
+    /// installed default); both are read. Empty result means the key is absent
+    /// (no schedule) or the plist couldn't be parsed.
+    static func rotationTimes() -> [(hour: Int, minute: Int)] {
         guard let data = FileManager.default.contents(atPath: Config.userAgentPlist),
-              let root = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
-              let interval = root["StartCalendarInterval"] as? [String: Any]
-        else { return nil }
-        let hour = (interval["Hour"] as? Int) ?? 0
-        let minute = (interval["Minute"] as? Int) ?? 0
-        return (hour, minute)
+              let root = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
+        else { return [] }
+        let raw = root["StartCalendarInterval"]
+        let dicts: [[String: Any]] = (raw as? [[String: Any]])
+            ?? (raw as? [String: Any]).map { [$0] }
+            ?? []
+        return dicts.map { (($0["Hour"] as? Int) ?? 0, ($0["Minute"] as? Int) ?? 0) }
     }
 
     // MARK: - helpers

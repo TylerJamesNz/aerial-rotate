@@ -39,18 +39,37 @@ enum DaemonScheduler {
         }
     }
 
-    /// Rewrite the user agent's StartCalendarInterval {Hour, Minute} and reload
-    /// it in the GUI domain. All user-owned, so no password. Validated integer
-    /// literals only; no user free-text reaches the shell.
-    static func reschedule(hour: Int, minute: Int) -> Result {
-        guard (0...23).contains(hour), (0...59).contains(minute) else {
-            return .failure("Time out of range (\(hour):\(minute)).")
+    /// Rewrite the user agent's whole `StartCalendarInterval` to fire at every
+    /// time in `times`, then reload it in the GUI domain. All user-owned, so no
+    /// password. The key is written in one shot as a JSON array (avoids fragile
+    /// per-index `plutil` paths); an empty list removes the key entirely so the
+    /// agent simply never auto-fires (manual Refresh still works).
+    ///
+    /// The JSON is built from validated integers only, so no user free-text
+    /// reaches the shell, same safety posture as the old literal-int path.
+    static func reschedule(times: [RotationTime]) -> Result {
+        for t in times where !(0...23).contains(t.hour) || !(0...59).contains(t.minute) {
+            return .failure("Time out of range (\(t.hour):\(t.minute)).")
         }
+        // Dedupe by (hour, minute) and sort so the written schedule is canonical.
+        var seen = Set<[Int]>()
+        let clean = times.sorted().filter { seen.insert([$0.hour, $0.minute]).inserted }
+
         let plist = Config.userAgentPlist
         let uid = getuid()
+
+        let writeCmd: String
+        if clean.isEmpty {
+            // -remove on an absent key exits non-zero; swallow so an
+            // already-empty schedule still reloads cleanly.
+            writeCmd = "/usr/bin/plutil -remove StartCalendarInterval '\(plist)' 2>/dev/null; true"
+        } else {
+            let json = "[" + clean.map { "{\"Hour\":\($0.hour),\"Minute\":\($0.minute)}" }.joined(separator: ",") + "]"
+            writeCmd = "/usr/bin/plutil -replace StartCalendarInterval -json '\(json)' '\(plist)'"
+        }
+
         let shell = """
-        /usr/bin/plutil -replace StartCalendarInterval.Hour -integer \(hour) '\(plist)' && \
-        /usr/bin/plutil -replace StartCalendarInterval.Minute -integer \(minute) '\(plist)' && \
+        \(writeCmd) && \
         /bin/launchctl bootout gui/\(uid) '\(plist)' 2>/dev/null; \
         /bin/launchctl bootstrap gui/\(uid) '\(plist)'
         """

@@ -63,11 +63,17 @@ enum WallpaperStore {
         return false
     }
 
+    /// Absolute path to a cached aerial's .mov by asset id, if it exists on disk.
+    static func movURL(for id: String) -> URL? {
+        guard !id.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: Config.videoDir).appendingPathComponent("\(id).mov")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
     /// Absolute path to the current wallpaper .mov, if it can be resolved and exists on disk.
     static func currentMovURL() -> URL? {
         guard let id = currentAssetID() else { return nil }
-        let url = URL(fileURLWithPath: Config.videoDir).appendingPathComponent("\(id).mov")
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        return movURL(for: id)
     }
 
     private static func value(at path: [String], in root: [String: Any]) -> Any? {

@@ -48,4 +48,14 @@ enum Config {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return home + "/Library/Application Support/com.apple.wallpaper/Store/Index.plist"
     }
+
+    /// The shuffle-favourites file the app WRITES and the daemon READS to narrow
+    /// its shuffle pool (`{ "ids": [...] }`). The only file the app writes for
+    /// the daemon to consume; empty/missing means "shuffle everything". The
+    /// daemon resolves the same path off the target user's home (via dscl), so
+    /// these two must stay in sync with `aerial-rotate.sh`.
+    static var favouritesStore: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return home + "/Library/Application Support/aerial-rotate/shuffle-favourites.json"
+    }
 }
