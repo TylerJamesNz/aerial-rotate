@@ -445,6 +445,13 @@ private struct PreflightBannerStack: View {
             if let progress = state.thumbnailFetchProgress, progress.loaded < progress.total {
                 ThumbnailsLoadingInfoBanner(progress: progress)
             }
+            // Self-update ready banner. Only `.ready` surfaces (silent UX
+            // through `.checking` / `.downloading` per the locked design).
+            // Sits at the bottom of the stack alongside other info-tinted
+            // banners so a red preflight banner stays at the top.
+            if case .ready(let version, _, _) = state.updateState {
+                UpdateReadyBanner(version: version)
+            }
         }
     }
 }
@@ -616,6 +623,26 @@ private struct ThumbnailsLoadingInfoBanner: View {
     }
 }
 
+/// Blue/info banner: a newer release has been silently pre-fetched into the
+/// staging dir and is ready to install. Clicking the CTA spawns the detached
+/// helper, quits the app, swaps the bundle, and relaunches. The locked UX
+/// keeps the download progress off-screen; `tail -F ~/Library/Application\ Support/aerial-rotate/updater.log`
+/// is the live view of the pre-fetch if anyone wants to watch it.
+private struct UpdateReadyBanner: View {
+    let version: String
+
+    var body: some View {
+        let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        BannerCard(
+            tint: .blue,
+            icon: "arrow.down.circle.fill",
+            title: "Update \(version) ready",
+            message: "You're on \(current). Click to install and relaunch, should take a couple seconds.",
+            cta: .installUpdate
+        )
+    }
+}
+
 /// Blue/info banner: swiftDialog isn't installed, so daemon-side Notification
 /// Center banners are off. The app's own user-session Notifier still works.
 private struct DialogMissingInfoBanner: View {
@@ -630,20 +657,37 @@ private struct DialogMissingInfoBanner: View {
     }
 }
 
-/// Where a banner's primary button should take the operator. Keeps the deep-link
-/// URL out of the per-case copy block.
+/// Where a banner's primary button should take the operator, or what action
+/// it should run. Each case bundles its label, icon, and behaviour so the
+/// shared `BannerCard` stays oblivious to whether a CTA opens a URL or kicks
+/// off in-app work.
 private enum BannerCTA: Equatable {
     case wallpaperSettings
+    case installUpdate
 
     var label: String {
         switch self {
         case .wallpaperSettings: return "Open Wallpaper Settings"
+        case .installUpdate:     return "Install and relaunch"
         }
     }
 
-    var url: URL? {
+    var systemImage: String {
         switch self {
-        case .wallpaperSettings: return URL(string: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension")
+        case .wallpaperSettings: return "gearshape"
+        case .installUpdate:     return "arrow.clockwise.circle.fill"
+        }
+    }
+
+    @MainActor
+    func perform() {
+        switch self {
+        case .wallpaperSettings:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension") {
+                NSWorkspace.shared.open(url)
+            }
+        case .installUpdate:
+            Task { await Updater.shared.installAndRelaunch() }
         }
     }
 }
@@ -671,9 +715,9 @@ private struct BannerCard: View {
                 .fixedSize(horizontal: false, vertical: true)
             if let cta {
                 Button {
-                    if let url = cta.url { NSWorkspace.shared.open(url) }
+                    cta.perform()
                 } label: {
-                    Label(cta.label, systemImage: "gearshape")
+                    Label(cta.label, systemImage: cta.systemImage)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(tint)

@@ -78,4 +78,23 @@ enum Config {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return home + "/Library/Application Support/aerial-rotate/thumbnails.log"
     }
+
+    /// Per-line `UPDATE:` log from `Updater`. Same shape as `thumbnailLog`;
+    /// `tail -F` here shows the silent pre-fetch happening between cold
+    /// launch and the banner appearing.
+    static var updateLog: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return home + "/Library/Application Support/aerial-rotate/updater.log"
+    }
+
+    /// Where the downloaded release .zip + (optional) daemon script land
+    /// before install, and where the detached helper script is copied to so
+    /// it survives the bundle swap that the helper itself performs.
+    static var updateStagingDir: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return home + "/Library/Application Support/aerial-rotate/update-staging"
+    }
+    static var updateHelperScriptPath: String {
+        updateStagingDir + "/install-update.sh"
+    }
 }

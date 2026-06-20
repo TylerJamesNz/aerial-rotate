@@ -4,6 +4,22 @@ Keeps the macOS aerial (Sonoma/Sequoia screensaver + dynamic wallpaper) video ca
 
 On the machine this was built for, the aerial cache had grown to **6.4 GB**. After the first run it was down to a single ~500 MB video.
 
+## Installing on a new Mac
+
+1. Grab the latest **AerialRotate-vX.YY.zip** from the [Releases page](https://github.com/TylerJamesNz/aerial-rotate/releases/latest).
+2. Drag **AerialRotate.app** into your `~/Applications` folder.
+3. Double-click to launch. macOS will block it once because the app is ad-hoc signed.
+4. Open **System Settings → Privacy & Security → Security** and click **Open Anyway** next to "AerialRotate". You may need to enter your login password.
+5. Re-launch the app. Click **Open** on the confirmation dialog.
+
+That's the one-time dance. Every future update installs silently from the in-app banner.
+
+This installs only the menu-bar app. The privileged daemon that does the actual rotation (see "The solution" below) is a separate step: clone this repo and run `sudo ./install.sh` to get the daemon, user agent, and swiftDialog in place.
+
+### Updating
+
+After install, the app polls GitHub Releases once at launch and every 6 hours. When a new version is available it downloads in the background and surfaces a banner reading **Update X.YY ready**. Click **Install and relaunch** to swap in the new bundle. If the release also bumps the daemon script, macOS will prompt once for your password during install so the daemon can be updated too.
+
 ## The problem
 
 macOS stores aerial videos under:
@@ -89,14 +105,15 @@ app/                                 # SwiftUI menu-bar status app (see app/READ
 
 ### Updating the app
 
-The app has no privileged role, so it lives in user-owned `~/Applications` and updates without a password. Two tiers:
+The app has no privileged role, so it lives in user-owned `~/Applications` and updates without a password. Two channels:
 
 ```
-sudo ./install.sh          # ONCE per Mac: daemon + user agent + swiftDialog + the app
-git pull && ./app/update.sh  # every app update after that, no sudo
+sudo ./install.sh                       # ONCE per Mac: daemon + user agent + swiftDialog + the app
+# normal users: the in-app banner does the rest (polls GitHub Releases, see "Updating" above)
+# dev workflow: git pull && ./app/update.sh   # rebuild and swap from local source, no sudo
 ```
 
-`app/update.sh` builds the app, quits the running copy, swaps the bundle in `~/Applications`, re-points the login item, and relaunches. The menu-bar dropdown shows the running version so you can confirm an update landed. (Sparkle-style in-app auto-update is a deliberate non-goal: every Mac has the repo, so git is the update channel.)
+`app/update.sh` builds the app from local source, quits the running copy, swaps the bundle in `~/Applications`, re-points the login item, and relaunches. It's the fast path for hacking on the app. Everyone else gets the same swap via the in-app banner once a release lands on the Releases page.
 
 ## Install
 

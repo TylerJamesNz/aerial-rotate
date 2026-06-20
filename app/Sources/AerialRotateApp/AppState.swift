@@ -115,6 +115,12 @@ final class AppState: ObservableObject {
     /// disappears the moment `loaded == total`.
     @Published var thumbnailFetchProgress: ThumbnailFetchProgress?
 
+    /// Self-update lifecycle owned by `Updater`. The view layer reads this to
+    /// decide whether to draw the blue `UpdateReadyBanner`; the locked UX is
+    /// silent through `.checking` / `.downloading`, so only `.ready` surfaces
+    /// the banner. Throttled to 6h between checks inside `Updater.check()`.
+    @Published var updateState: UpdateState = .idle
+
     /// Re-entrancy guard for the batch loader. The 5s auto-refresh fires
     /// `refresh()` independent of whether a previous batch has finished, so
     /// without this a slow CDN run would spawn parallel batches.
@@ -190,6 +196,11 @@ final class AppState: ObservableObject {
                     if !unchanged { self.rotationTimes = incoming }
                 }
                 self.refreshMissingThumbnails(pool: pool)
+                // 6h-throttled inside Updater.check(), so the 5s refresh tick
+                // doesn't actually hit GitHub on every call. Piggy-backed here
+                // rather than on a dedicated timer so the updater only runs
+                // while the app is foregrounded enough to refresh.
+                Task { await Updater.shared.check() }
             }
         }
     }

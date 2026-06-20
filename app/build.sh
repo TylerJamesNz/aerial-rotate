@@ -25,6 +25,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 install -m 755 "$BIN" "$APP/Contents/MacOS/$BIN_NAME"
 install -m 644 "$HERE/Sources/AerialRotateApp/Resources/Info.plist" "$APP/Contents/Info.plist"
+# Detached self-update helper script, looked up at runtime by Updater via
+# Bundle.main.url(forResource: "install-update", withExtension: "sh").
+install -m 755 "$HERE/Sources/AerialRotateApp/Resources/install-update.sh" "$APP/Contents/Resources/install-update.sh"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 echo "== ad-hoc codesign =="
