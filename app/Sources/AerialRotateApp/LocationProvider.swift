@@ -17,7 +17,7 @@ import os
 /// the main thread, and each one-shot fix is bounded by a timeout so a Mac that
 /// never returns a fix degrades to the IP fallback instead of hanging the refresh.
 final class LocationProvider: NSObject, CLLocationManagerDelegate {
-    private let log = Logger(subsystem: "com.aerialrotate.aerial-rotate.app", category: "location")
+    private let log = Logger(subsystem: "com.aerialrotate.app", category: "location")
     private let manager: CLLocationManager
 
     /// Continuations awaiting the next one-shot fix, fulfilled by the delegate

@@ -29,8 +29,8 @@ Pinning the `assetID` stops the *displayed* shuffle but not the prefetch. The wa
 Rotation needs root (the asset dir is root-owned) but must fire without a password prompt. Timing is split from privilege across two jobs and one shared trigger file:
 
 ```
-User LaunchAgent (com.aerialrotate.aerial-rotate-agent)  # holds the daily schedule, touches the trigger
-Root LaunchDaemon (com.aerialrotate.aerial-rotate)       # WatchPaths on the trigger -> runs the script as root
+User LaunchAgent (com.aerialrotate.agent)  # holds the daily schedule, touches the trigger
+Root LaunchDaemon (com.aerialrotate)       # WatchPaths on the trigger -> runs the script as root
 ```
 
 The agent (and the app's "Refresh now") just `touch /usr/local/var/aerial-rotate/trigger`; the trigger dir is user-owned, so no path needs sudo. The daemon skips unless the trigger's mtime is fresh (within 120s), so load-fires (boot, install, reload) and double-clicks are no-ops.
@@ -63,8 +63,8 @@ For hacking on the app locally: `./app/update.sh` rebuilds from source, swaps th
 
 ```
 aerial-rotate.sh                          # the rotation script (-> /usr/local/bin/)
-com.aerialrotate.aerial-rotate.plist       # root LaunchDaemon (-> /Library/LaunchDaemons/)
-com.aerialrotate.aerial-rotate-agent.plist # user LaunchAgent  (-> ~/Library/LaunchAgents/)
+com.aerialrotate.plist       # root LaunchDaemon (-> /Library/LaunchDaemons/)
+com.aerialrotate.agent.plist # user LaunchAgent  (-> ~/Library/LaunchAgents/)
 install.sh                                 # one-shot installer (sudo)
 app/                                       # SwiftUI menu-bar app (see app/README.md)
 ```
@@ -75,11 +75,11 @@ app/                                       # SwiftUI menu-bar app (see app/READM
 tail -f /var/log/aerial-rotate.log                              # watch the log
 touch /usr/local/var/aerial-rotate/trigger                      # run a rotation by hand (no sudo)
 
-sudo launchctl print system/com.aerialrotate.aerial-rotate      # inspect the root daemon
-launchctl print "gui/$(id -u)/com.aerialrotate.aerial-rotate-agent"  # inspect the user agent
+sudo launchctl print system/com.aerialrotate      # inspect the root daemon
+launchctl print "gui/$(id -u)/com.aerialrotate.agent"  # inspect the user agent
 
-sudo launchctl bootout system /Library/LaunchDaemons/com.aerialrotate.aerial-rotate.plist
-launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.aerialrotate.aerial-rotate-agent.plist
+sudo launchctl bootout system /Library/LaunchDaemons/com.aerialrotate.plist
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.aerialrotate.agent.plist
 ```
 
 State lives in `/var/log/aerial-rotate.{log,state,prune-counter}`.
