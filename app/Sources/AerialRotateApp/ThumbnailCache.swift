@@ -3,9 +3,9 @@ import AppKit
 import os
 
 /// Unified-logging channel for thumbnail-cache events. Visible via Console.app
-/// (filter on subsystem `com.tyler.aerial-rotate`, category `thumbnails`) and
-/// the CLI: `log stream --predicate 'subsystem == "com.tyler.aerial-rotate"' --info --debug`.
-private let thumbnailLogger = Logger(subsystem: "com.tyler.aerial-rotate", category: "thumbnails")
+/// (filter on subsystem `com.aerialrotate.aerial-rotate`, category `thumbnails`) and
+/// the CLI: `log stream --predicate 'subsystem == "com.aerialrotate.aerial-rotate"' --info --debug`.
+private let thumbnailLogger = Logger(subsystem: "com.aerialrotate.aerial-rotate", category: "thumbnails")
 
 /// Three-tier resolver for aerial thumbnails: in-memory → idleassetsd's
 /// preview JPEGs → app-owned disk cache → Apple's CDN. The local-only tiers
@@ -202,7 +202,7 @@ enum ThumbnailCache {
     /// Serial queue so the tail-log append/rotate is consistent across the
     /// per-row `.task` and the batch loader; the network work runs concurrently
     /// off the queue, only the file-handle dance is serialised.
-    private static let logQueue = DispatchQueue(label: "com.tyler.aerial-rotate.thumblog")
+    private static let logQueue = DispatchQueue(label: "com.aerialrotate.aerial-rotate.thumblog")
 
     /// Append `raw` to `Config.thumbnailLog`, truncating once the file passes
     /// ~1 MB. Matches the daemon's user-visible `/var/log/aerial-rotate.log`

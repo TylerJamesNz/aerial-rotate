@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.tyler.aerial-rotate-agent</string>
+    <string>com.aerialrotate.aerial-rotate-agent</string>
     <!-- Runs as the user. Its only job is to bump the trigger file's mtime at
          the scheduled time; the root LaunchDaemon watches that file (WatchPaths)
          and does the privileged rotation. Splitting timing (here, user-owned)

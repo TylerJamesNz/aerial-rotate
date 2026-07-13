@@ -12,7 +12,7 @@ USER_UID=$(id -u "$TARGET_USER")
 USER_HOME=$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory | awk '{print $2}')
 VIDEO_DIR="/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS"
 SENTINEL="/usr/local/var/aerial-rotate/trigger"   # WatchPaths trigger shared by the user agent + the app
-AGENT_PLIST="$USER_HOME/Library/LaunchAgents/com.tyler.aerial-rotate-agent.plist"
+AGENT_PLIST="$USER_HOME/Library/LaunchAgents/com.aerialrotate.aerial-rotate-agent.plist"
 
 echo "== free space BEFORE =="
 df -h /System/Volumes/Data | tail -1
@@ -40,7 +40,7 @@ fi
 
 echo "== installing script + daemon =="
 install -m 755 "$REPO_DIR/aerial-rotate.sh" /usr/local/bin/aerial-rotate.sh
-install -m 644 -o root -g wheel "$REPO_DIR/com.tyler.aerial-rotate.plist" /Library/LaunchDaemons/com.tyler.aerial-rotate.plist
+install -m 644 -o root -g wheel "$REPO_DIR/com.aerialrotate.aerial-rotate.plist" /Library/LaunchDaemons/com.aerialrotate.aerial-rotate.plist
 
 echo "== creating the WatchPaths trigger dir (user-owned, no sudo to touch) =="
 # The daemon watches $SENTINEL; the user agent and the app touch it. The dir is
@@ -48,15 +48,15 @@ echo "== creating the WatchPaths trigger dir (user-owned, no sudo to touch) =="
 install -d -o "$TARGET_USER" -g staff /usr/local/var/aerial-rotate
 
 echo "== loading the root daemon (fires on a trigger touch via WatchPaths) =="
-launchctl bootout system /Library/LaunchDaemons/com.tyler.aerial-rotate.plist 2>/dev/null || true
-launchctl bootstrap system /Library/LaunchDaemons/com.tyler.aerial-rotate.plist
+launchctl bootout system /Library/LaunchDaemons/com.aerialrotate.aerial-rotate.plist 2>/dev/null || true
+launchctl bootstrap system /Library/LaunchDaemons/com.aerialrotate.aerial-rotate.plist
 
 echo "== installing + loading the user agent (owns the daily schedule) =="
 # The agent runs as the user at the scheduled time and only touches the trigger;
 # the daemon does the privileged rotation. Splitting timing (user-owned plist)
 # from privilege (root daemon) is what lets the app reschedule without a password.
 install -d -o "$TARGET_USER" -g staff "$USER_HOME/Library/LaunchAgents"
-install -m 644 -o "$TARGET_USER" -g staff "$REPO_DIR/com.tyler.aerial-rotate-agent.plist" "$AGENT_PLIST"
+install -m 644 -o "$TARGET_USER" -g staff "$REPO_DIR/com.aerialrotate.aerial-rotate-agent.plist" "$AGENT_PLIST"
 launchctl asuser "$USER_UID" launchctl bootout "gui/$USER_UID" "$AGENT_PLIST" 2>/dev/null || true
 launchctl asuser "$USER_UID" launchctl bootstrap "gui/$USER_UID" "$AGENT_PLIST"
 
