@@ -13,7 +13,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 APP="$HERE/AerialRotate.app"
 BIN_NAME="AerialRotate"
-BUNDLE_ID="com.aerialrotate.aerial-rotate.app"
+BUNDLE_ID="com.aerialrotate.app"
 
 echo "== swift build (release, arm64) =="
 swift build -c release --arch arm64 --package-path "$HERE"
