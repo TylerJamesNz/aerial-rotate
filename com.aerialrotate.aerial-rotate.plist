@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.tyler.aerial-rotate</string>
+    <string>com.aerialrotate.aerial-rotate</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>

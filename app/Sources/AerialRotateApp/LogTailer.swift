@@ -9,7 +9,7 @@ import Foundation
 /// reopening from the start when the file is renamed/deleted.
 final class LogTailer {
     private let path = Config.log
-    private let queue = DispatchQueue(label: "com.tyler.aerial-rotate.logtailer")
+    private let queue = DispatchQueue(label: "com.aerialrotate.aerial-rotate.logtailer")
 
     private var fd: Int32 = -1
     private var source: DispatchSourceFileSystemObject?

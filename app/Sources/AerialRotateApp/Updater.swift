@@ -3,9 +3,9 @@ import AppKit
 import os
 
 /// Unified-logging channel for the self-updater. Visible in Console.app (filter
-/// on subsystem `com.tyler.aerial-rotate`, category `updater`) and the CLI:
-/// `log stream --predicate 'subsystem == "com.tyler.aerial-rotate"' --info`.
-private let updateLogger = Logger(subsystem: "com.tyler.aerial-rotate", category: "updater")
+/// on subsystem `com.aerialrotate.aerial-rotate`, category `updater`) and the CLI:
+/// `log stream --predicate 'subsystem == "com.aerialrotate.aerial-rotate"' --info`.
+private let updateLogger = Logger(subsystem: "com.aerialrotate.aerial-rotate", category: "updater")
 
 /// The release the operator can install right now: version we pulled from the
 /// GitHub API, the assets to fetch, and the human notes to optionally surface.
@@ -379,7 +379,7 @@ actor Updater {
         updateLogger.info("\(raw, privacy: .public)")
     }
 
-    private static let logQueue = DispatchQueue(label: "com.tyler.aerial-rotate.updatelog")
+    private static let logQueue = DispatchQueue(label: "com.aerialrotate.aerial-rotate.updatelog")
 
     private static func appendLog(_ raw: String) {
         let line = raw.hasSuffix("\n") ? raw : raw + "\n"
