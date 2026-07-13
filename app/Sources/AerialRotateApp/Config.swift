@@ -22,14 +22,14 @@ enum Config {
         snapshotsDir + "/asset-preview-\(id).jpg"
     }
 
-    static let daemonPlist = "/Library/LaunchDaemons/com.tyler.aerial-rotate.plist"
-    static let daemonLabel = "com.tyler.aerial-rotate"
+    static let daemonPlist = "/Library/LaunchDaemons/com.aerialrotate.aerial-rotate.plist"
+    static let daemonLabel = "com.aerialrotate.aerial-rotate"
     static let daemonScript = "/usr/local/bin/aerial-rotate.sh"
 
     /// WatchPaths trigger the root daemon watches. Bumping its mtime (the
     /// "Refresh now" button, or the user agent at the scheduled time) fires a
     /// privileged rotation with no password. User-owned dir, so the app writes
-    /// it without sudo. Must match `WatchPaths` in com.tyler.aerial-rotate.plist
+    /// it without sudo. Must match `WatchPaths` in com.aerialrotate.aerial-rotate.plist
     /// and `SENTINEL` in aerial-rotate.sh.
     static let sentinel = "/usr/local/var/aerial-rotate/trigger"
 
@@ -37,10 +37,10 @@ enum Config {
     /// to reschedule (it's user-owned, so no password); the agent's only job is
     /// to touch the sentinel at the scheduled time. The rotation time is read
     /// from here now, not the root daemon plist.
-    static let agentLabel = "com.tyler.aerial-rotate-agent"
+    static let agentLabel = "com.aerialrotate.aerial-rotate-agent"
     static var userAgentPlist: String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return home + "/Library/LaunchAgents/com.tyler.aerial-rotate-agent.plist"
+        return home + "/Library/LaunchAgents/com.aerialrotate.aerial-rotate-agent.plist"
     }
 
     /// User-owned wallpaper store holding the currently pinned asset id.

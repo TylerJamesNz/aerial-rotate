@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.tyler.aerial-rotate.app</string>
+    <string>com.aerialrotate.aerial-rotate.app</string>
     <key>CFBundleName</key>
     <string>AerialRotate</string>
     <key>CFBundleDisplayName</key>
