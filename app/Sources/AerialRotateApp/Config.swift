@@ -10,16 +10,25 @@ enum Config {
     static let log = "/var/log/aerial-rotate.log"
     static let state = "/var/log/aerial-rotate.state"
 
-    static let assetRoot = "/Library/Application Support/com.apple.idleassetsd/Customer"
-    static var videoDir: String { assetRoot + "/4KSDR240FPS" }
-    static var entriesJSON: String { assetRoot + "/entries.json" }
+    /// macOS 27 moved the aerial catalog, videos, and thumbnails out of the old
+    /// system-wide com.apple.idleassetsd/Customer tree (managed by idleassetsd,
+    /// which no longer exists) into the user's own com.apple.wallpaper/aerials
+    /// tree, user-owned. All still world-readable within the user account, so
+    /// the app needs no Full Disk Access.
+    static var assetRoot: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return home + "/Library/Application Support/com.apple.wallpaper/aerials"
+    }
+    static var videoDir: String { assetRoot + "/videos" }
+    static var entriesJSON: String { assetRoot + "/manifest/entries.json" }
 
-    /// Local preview JPEGs idleassetsd caches per asset, keyed by the same id as
-    /// the .mov (sibling of Customer/). World-readable, ~50 KB, present for the
-    /// whole catalog, so a thumbnail needs no network.
-    static let snapshotsDir = "/Library/Application Support/com.apple.idleassetsd/snapshots"
+    /// Local preview PNGs macOS caches per asset under the per-user aerials tree,
+    /// one file named by the asset id. Present for the whole shuffle-eligible
+    /// catalog, so a thumbnail needs no network (the CDN fetch in ThumbnailCache
+    /// is now a rarely-hit fallback).
+    static var snapshotsDir: String { assetRoot + "/thumbnails" }
     static func previewImagePath(for id: String) -> String {
-        snapshotsDir + "/asset-preview-\(id).jpg"
+        snapshotsDir + "/\(id).png"
     }
 
     static let daemonPlist = "/Library/LaunchDaemons/com.tyler.aerial-rotate.plist"

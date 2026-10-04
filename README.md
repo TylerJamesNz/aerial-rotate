@@ -6,11 +6,13 @@ On the machine this was built for, the aerial cache had grown to **6.4 GB**. Aft
 
 ## The problem
 
-macOS stores aerial videos under:
+macOS stores aerial videos under (macOS 27 and later, per-user):
 
 ```
-/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/
+~/Library/Application Support/com.apple.wallpaper/aerials/videos/
 ```
+
+(Before macOS 27 this was the system-wide, root-owned `/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/`; macOS 27 moved the whole aerial tree, catalog and thumbnails included, into the user's own folder and retired `idleassetsd`.)
 
 Each 4K aerial is 350-750 MB. If you leave the wallpaper on "Shuffle all aerials", macOS keeps downloading and retaining more of them, and never cleans up. The cache silently climbs into the multiple-GB range.
 
@@ -136,5 +138,5 @@ State files:
 
 - The video dir is `root`-owned, so the rotation itself runs as root from a **LaunchDaemon**. A user **LaunchAgent** owns the schedule and fires the daemon by touching a WatchPaths trigger (see "How a run is triggered"), which is what keeps the app's Refresh and reschedule buttons password-free. `Index.plist` is user-owned; the script chowns it back to the user after editing.
 - Catalog asset fields used: `id`, `url-4K-SDR-240FPS`, `accessibilityLabel` (human name), `includeInShuffle`.
-- Built and tested on macOS 15 (Sequoia), Apple Silicon. The `Index.plist` key paths are macOS-version-specific; the script aborts with a clear message if Apple changes the schema.
+- Built and tested on macOS 15 (Sequoia) and macOS 27, Apple Silicon. The aerial asset tree is per-user from macOS 27 on (`~/Library/Application Support/com.apple.wallpaper/aerials/`); earlier macOS kept it system-wide under `com.apple.idleassetsd`. The `Index.plist` key paths are macOS-version-specific; the script aborts with a clear message if Apple changes the schema.
 - `PRUNE_EVERY` in the script controls how often the dir is pruned to one video. Set it to `1` once you have confirmed the Shuffle-kill stops the prefetch.
