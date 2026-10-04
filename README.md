@@ -1,104 +1,47 @@
 # aerial-rotate
 
-Keeps the macOS aerial (Sonoma/Sequoia screensaver + dynamic wallpaper) video cache small by holding just one or two aerials on disk and swapping in a fresh random one each day, instead of letting macOS hoard every aerial you have ever previewed.
+Keeps the macOS aerial video cache (Sonoma/Sequoia screensaver + dynamic wallpaper) small by holding just one aerial on disk and swapping in a fresh random one each day, instead of letting macOS hoard every aerial you have ever previewed.
 
-On the machine this was built for, the aerial cache had grown to **6.4 GB**. After the first run it was down to a single ~500 MB video.
+On the machine this was built for, the cache had grown to **6.4 GB**. After the first run it was down to a single ~500 MB video.
 
 ## The problem
 
-macOS stores aerial videos under (macOS 27 and later, per-user):
-
-```
-~/Library/Application Support/com.apple.wallpaper/aerials/videos/
-```
-
-(Before macOS 27 this was the system-wide, root-owned `/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/`; macOS 27 moved the whole aerial tree, catalog and thumbnails included, into the user's own folder and retired `idleassetsd`.)
-
-Each 4K aerial is 350-750 MB. If you leave the wallpaper on "Shuffle all aerials", macOS keeps downloading and retaining more of them, and never cleans up. The cache silently climbs into the multiple-GB range.
+macOS stores 4K aerials (350-750 MB each) under `~/Library/Application Support/com.apple.wallpaper/aerials/videos/` (macOS 27 and later, per-user; before macOS 27 this was the system-wide, root-owned `/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/`, and macOS 27 moved the whole aerial tree, catalog and thumbnails included, into the user's own folder and retired `idleassetsd`). On "Shuffle all aerials" it keeps downloading and retaining more, never cleaning up, so the cache silently climbs into the multi-GB range.
 
 ## The solution
 
-A `bash` script that does the privileged rotation, fired once a day. Each run:
+A privileged `bash` script (`aerial-rotate.sh`) fired once a day. Each run:
 
-1. **Snapshots the video dir** and logs which `.mov`s appeared since the last run (diagnostic: shows whether macOS prefetched any aerials on its own).
-2. **Picks a random aerial** from the catalog (`entries.json`, ~98 eligible after filtering), excluding the current one.
-3. **Downloads just that one `.mov`** from Apple's public `sylvan.apple.com` CDN (no auth), posting progress **banner notifications** at 0/20/40/60/80%, and verifies the byte count against the server's `Content-Length`.
-4. **Pins the wallpaper** to the new asset by writing a tiny `{"assetID": "<uuid>"}` binary plist into the wallpaper store (`Index.plist`), then reloads `WallpaperAgent`.
-5. **Removes the `Shuffle` dict** from the wallpaper store (see "The Shuffle bug" below) so macOS stops cycling and prefetching new aerials behind your back.
-6. **Prunes every other `.mov`** so you are left with one aerial on disk. Pruning happens **last**, only after the new video is downloaded, verified, and applied, so you are never left with zero. (During the confirmation phase this is gated to every other run via a small counter, so accumulation stays observable.)
+1. Picks a random aerial from the catalog (`entries.json`, ~98 eligible), excluding the current one.
+2. Downloads just that one `.mov` from Apple's public `sylvan.apple.com` CDN, posting progress banners, and verifies it against the server's `Content-Length`.
+3. Pins the wallpaper to the new asset (writes `{"assetID": "<uuid>"}` into the wallpaper store's `Index.plist`, reloads `WallpaperAgent`).
+4. Removes the `Shuffle` dict from the wallpaper store (see below) so macOS stops prefetching.
+5. Prunes every other `.mov`, **last** and only after the new one is verified and applied, so you are never left with zero.
 
-If the download or verify fails, the script **aborts without deleting** the existing video.
-
-### How a run is triggered (two launchd jobs, no password)
-
-The rotation needs root (the asset dir is root-owned), but the app must trigger it without prompting for a password every time. Timing is split from privilege across two launchd jobs and one shared trigger file:
-
-```
-User LaunchAgent (com.tyler.aerial-rotate-agent)   # user-owned, holds the daily schedule
-    | /usr/bin/touch /usr/local/var/aerial-rotate/trigger   (no sudo)
-    v
-Root LaunchDaemon (com.tyler.aerial-rotate)        # WatchPaths on the trigger -> runs the script as root
-    ^
-    | touch trigger (app "Refresh now") / rewrite agent plist (app reschedule)
-   AerialRotate.app                                 # user GUI session, no password
-```
-
-- The **root daemon** no longer carries a schedule. It has a `WatchPaths` on `/usr/local/var/aerial-rotate/trigger`; any change to that file's mtime starts the privileged rotation.
-- The **user agent** owns the daily time (`StartCalendarInterval`). When it fires it does one thing: `touch` the trigger. Because the agent plist is user-owned, the app reschedules by rewriting it, no password.
-- The **app's "Refresh now"** just touches the trigger directly. The trigger dir is user-owned (created by `install.sh`), so neither path needs root.
-
-`WatchPaths` starts a job once at *load* too (boot, install, daemon reload), not only on later changes. So the script skips unless the trigger was freshly touched (mtime within 120s); a stale mtime means a load-fire and the run is a no-op. This also debounces a double-click of Refresh. The script never writes the trigger, so the watch can't feed back on itself.
+If the download or verify fails, the script aborts without deleting anything.
 
 ### The Shuffle bug (the core fix)
 
-Pinning the `assetID` stops the *displayed* shuffle, but it does **not** stop macOS from prefetching. The wallpaper store keeps a `Shuffle` dict:
+Pinning the `assetID` stops the *displayed* shuffle but not the prefetch. The wallpaper store keeps a `Shuffle` dict at `AllSpacesAndDisplays.Linked.Content.Shuffle` and `SystemDefault.Linked.Content.Shuffle`; while it is present, macOS keeps re-downloading aerials on its own (observed: pruned to one video, macOS pulled two more within five minutes). The fix is to `plutil -remove` that dict from both paths after pinning, then verify it is gone.
+
+### How a run is triggered (two launchd jobs, no password)
+
+Rotation runs as root but must fire without a password prompt. Timing is split from privilege across two jobs and one shared trigger file (the root split predates macOS 27's per-user move and is kept deliberately, see `docs/adr/0001-keep-root-split-on-macos27.md`):
 
 ```
-...Linked.Content.Shuffle = { Type => afterDuration, Duration => [...] }
+User LaunchAgent (com.aerialrotate.agent)  # holds the daily schedule, touches the trigger
+Root LaunchDaemon (com.aerialrotate)       # WatchPaths on the trigger -> runs the script as root
 ```
 
-at both `AllSpacesAndDisplays.Linked.Content.Shuffle` and `SystemDefault.Linked.Content.Shuffle`. As long as that dict is present, macOS keeps cycling and **re-downloading** new aerials on its own. We observed the dir prune down to one video and then macOS pull two more within five minutes, with no job of ours running.
+The agent (and the app's "Refresh now") just `touch /usr/local/var/aerial-rotate/trigger`; the trigger dir is user-owned, so no path needs sudo. The daemon skips unless the trigger's mtime is fresh (within 120s), so load-fires (boot, install, reload) and double-clicks are no-ops.
 
-The fix is to `plutil -remove` the `Shuffle` dict from both paths after pinning, then verify it is gone. That is what actually stops the prefetch.
+### Notifications (swiftDialog)
 
-## swiftDialog (notifications)
-
-The script posts banner notifications as it works. Both obvious approaches are **dead on macOS 15**: `osascript -e 'display notification ...'` and `terminal-notifier` (last released 2017) use Apple's old `NSUserNotification` API, which on macOS 15 silently no-ops. It never displays a banner and never registers in **System Settings > Notifications**, so there is nothing to permission-grant. osascript additionally posts under a non-permitted host-app identity, which gets dropped.
-
-So the notification path uses [**swiftDialog**](https://github.com/swiftDialog/swiftDialog) instead, the Mac-admin community standard for notifications from scripts and daemons. It is notarized/signed, **requires macOS 15+** (built for Sequoia), and registers correctly in Notifications settings so it can be permission-granted. Its `/usr/local/bin/dialog` launcher detects root context and bridges into the logged-in user's GUI session via `launchctl asuser` on its own, so the daemon (which runs as root) can call it directly:
-
-```
-/usr/local/bin/dialog --notification --title "🌄 Aerial" --subtitle "<event>" --message "<detail>"
-```
-
-`notify()` always writes a `NOTIFY:` line to the log first, then fires the banner if `dialog` is present, so a run is always traceable in the log even if the banner is missing.
-
-`install.sh` installs swiftDialog for you via its official notarized `.pkg` (no Homebrew dependency). The first banner may require a one-time **Allow Notifications for Dialog** toggle in **System Settings > Notifications**; "Dialog" will be in the list once it has fired once.
-
-## Layout
-
-```
-aerial-rotate.sh                     # the rotation script (installed to /usr/local/bin/)
-com.tyler.aerial-rotate.plist        # root LaunchDaemon: WatchPaths trigger -> rotate (installed to /Library/LaunchDaemons/)
-com.tyler.aerial-rotate-agent.plist  # user LaunchAgent: daily schedule -> touch trigger (installed to ~/Library/LaunchAgents/)
-install.sh                           # one-shot installer (sudo)
-app/                                 # SwiftUI menu-bar status app (see app/README.md)
-```
+The old notification APIs (`osascript display notification`, `terminal-notifier`) silently no-op on macOS 15, so the script uses [swiftDialog](https://github.com/swiftDialog/swiftDialog), the Mac-admin standard, which registers in Notifications settings and bridges root -> the logged-in GUI session on its own. `install.sh` installs it via its notarized `.pkg`. The first banner may need a one-time **Allow Notifications for Dialog** toggle. Every notification also writes a `NOTIFY:` line to the log, so runs stay traceable even if a banner is missing.
 
 ## Menu-bar app
 
-`app/` is a native SwiftUI menu-bar app (`AerialRotate.app`) that puts an interactive face on the daemon: live rotation progress, the current wallpaper with Reveal-in-Finder, disk usage, a countdown to the next rotation, a sun/moon celestial dial for scheduling one or more daily rotation times (shown in 12-hour AM/PM), and the full installed-aerial catalog flagging anything macOS prefetched. The dropdown also shows the running app version. It reads the daemon's own log/state (no daemon rewrite) and posts its own Notification Center banners from the user GUI session, where the root daemon can't. `install.sh` builds and installs it as a login item in `~/Applications`. See [app/README.md](app/README.md).
-
-### Updating the app
-
-The app has no privileged role, so it lives in user-owned `~/Applications` and updates without a password. Two tiers:
-
-```
-sudo ./install.sh          # ONCE per Mac: daemon + user agent + swiftDialog + the app
-git pull && ./app/update.sh  # every app update after that, no sudo
-```
-
-`app/update.sh` builds the app, quits the running copy, swaps the bundle in `~/Applications`, re-points the login item, and relaunches. The menu-bar dropdown shows the running version so you can confirm an update landed. (Sparkle-style in-app auto-update is a deliberate non-goal: every Mac has the repo, so git is the update channel.)
+`app/` is a native SwiftUI menu-bar app (`AerialRotate.app`) over the daemon: live rotation progress, current wallpaper with Reveal-in-Finder, disk usage, a countdown, a sun/moon dial for scheduling daily rotation times, and the full aerial catalog flagging anything macOS prefetched. It reads the daemon's log/state (no rewrite) and posts its own banners from the GUI session. See [app/README.md](app/README.md).
 
 ## Install
 
@@ -106,37 +49,44 @@ git pull && ./app/update.sh  # every app update after that, no sudo
 sudo ./install.sh
 ```
 
-This installs the script and daemon, ensures swiftDialog is present, loads the daily timer, and runs one rotation immediately so you can watch the banners.
+Installs the script, daemon, user agent, swiftDialog, and the menu-bar app (a login item in `~/Applications`), loads the daily timer, and runs one rotation immediately.
+
+## Updating
+
+The app polls GitHub Releases at launch and every 6 hours. When a new version is ready it downloads in the background and shows an **Update X.YY ready** banner; click **Install and relaunch**. If the release bumps the daemon script, macOS prompts once for your password.
+
+To install on a fresh Mac from a release instead of source: grab the latest `.zip` from the [Releases page](https://github.com/TylerJamesNz/aerial-rotate/releases/latest), drag `AerialRotate.app` into `~/Applications`, then approve it once under **System Settings -> Privacy & Security** (it is ad-hoc signed). This gets the app only; run `sudo ./install.sh` from a clone to install the daemon.
+
+For hacking on the app locally: `./app/update.sh` rebuilds from source, swaps the bundle, and relaunches, no sudo.
+
+## Layout
+
+```
+aerial-rotate.sh                          # the rotation script (-> /usr/local/bin/)
+com.aerialrotate.plist       # root LaunchDaemon (-> /Library/LaunchDaemons/)
+com.aerialrotate.agent.plist # user LaunchAgent  (-> ~/Library/LaunchAgents/)
+install.sh                                 # one-shot installer (sudo)
+app/                                       # SwiftUI menu-bar app (see app/README.md)
+```
 
 ## Operate
 
 ```
-# watch the log
-tail -f /var/log/aerial-rotate.log
+tail -f /var/log/aerial-rotate.log                              # watch the log
+touch /usr/local/var/aerial-rotate/trigger                      # run a rotation by hand (no sudo)
 
-# run a rotation by hand (no sudo: fires the daemon via the WatchPaths trigger)
-touch /usr/local/var/aerial-rotate/trigger
+sudo launchctl print system/com.aerialrotate      # inspect the root daemon
+launchctl print "gui/$(id -u)/com.aerialrotate.agent"  # inspect the user agent
 
-# see the two jobs
-sudo launchctl print system/com.tyler.aerial-rotate          # root daemon (watches the trigger)
-launchctl print "gui/$(id -u)/com.tyler.aerial-rotate-agent" # user agent (daily schedule)
-
-# stop / remove the daemon + agent
-sudo launchctl bootout system /Library/LaunchDaemons/com.tyler.aerial-rotate.plist
-launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.tyler.aerial-rotate-agent.plist
+sudo launchctl bootout system /Library/LaunchDaemons/com.aerialrotate.plist
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.aerialrotate.agent.plist
 ```
 
-State files:
-
-```
-/var/log/aerial-rotate.log            # run log
-/var/log/aerial-rotate.state          # last run's dir snapshot (drives the prefetch diagnostic)
-/var/log/aerial-rotate.prune-counter  # runs since last prune
-```
+State lives in `/var/log/aerial-rotate.{log,state,prune-counter}`.
 
 ## Notes / gotchas
 
-- The video dir is `root`-owned, so the rotation itself runs as root from a **LaunchDaemon**. A user **LaunchAgent** owns the schedule and fires the daemon by touching a WatchPaths trigger (see "How a run is triggered"), which is what keeps the app's Refresh and reschedule buttons password-free. `Index.plist` is user-owned; the script chowns it back to the user after editing.
-- Catalog asset fields used: `id`, `url-4K-SDR-240FPS`, `accessibilityLabel` (human name), `includeInShuffle`.
-- Built and tested on macOS 15 (Sequoia) and macOS 27, Apple Silicon. The aerial asset tree is per-user from macOS 27 on (`~/Library/Application Support/com.apple.wallpaper/aerials/`); earlier macOS kept it system-wide under `com.apple.idleassetsd`. The `Index.plist` key paths are macOS-version-specific; the script aborts with a clear message if Apple changes the schema.
-- `PRUNE_EVERY` in the script controls how often the dir is pruned to one video. Set it to `1` once you have confirmed the Shuffle-kill stops the prefetch.
+- Rotation runs as root from a LaunchDaemon; a user LaunchAgent owns the schedule and fires it via the WatchPaths trigger, which keeps the app's Refresh and reschedule password-free. `Index.plist` is user-owned; the script chowns it back after editing. (Pre-macOS-27 the video dir was root-owned, which is why root was needed; macOS 27 made the whole aerial tree per-user, but the root split is kept deliberately, see `docs/adr/0001-keep-root-split-on-macos27.md`.)
+- Catalog fields used: `id`, `url-4K-SDR-240FPS`, `accessibilityLabel`, `includeInShuffle`.
+- Built and tested on macOS 15 (Sequoia) and macOS 27, Apple Silicon. The aerial asset tree is per-user from macOS 27 on (`~/Library/Application Support/com.apple.wallpaper/aerials/`); earlier macOS kept it system-wide under `com.apple.idleassetsd`. `Index.plist` key paths are version-specific; the script aborts with a clear message if Apple changes the schema.
+- `PRUNE_EVERY` in the script controls how often the dir is pruned to one video.

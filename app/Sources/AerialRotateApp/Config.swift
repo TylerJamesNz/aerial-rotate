@@ -31,14 +31,14 @@ enum Config {
         snapshotsDir + "/\(id).png"
     }
 
-    static let daemonPlist = "/Library/LaunchDaemons/com.tyler.aerial-rotate.plist"
-    static let daemonLabel = "com.tyler.aerial-rotate"
+    static let daemonPlist = "/Library/LaunchDaemons/com.aerialrotate.plist"
+    static let daemonLabel = "com.aerialrotate"
     static let daemonScript = "/usr/local/bin/aerial-rotate.sh"
 
     /// WatchPaths trigger the root daemon watches. Bumping its mtime (the
     /// "Refresh now" button, or the user agent at the scheduled time) fires a
     /// privileged rotation with no password. User-owned dir, so the app writes
-    /// it without sudo. Must match `WatchPaths` in com.tyler.aerial-rotate.plist
+    /// it without sudo. Must match `WatchPaths` in com.aerialrotate.plist
     /// and `SENTINEL` in aerial-rotate.sh.
     static let sentinel = "/usr/local/var/aerial-rotate/trigger"
 
@@ -46,10 +46,10 @@ enum Config {
     /// to reschedule (it's user-owned, so no password); the agent's only job is
     /// to touch the sentinel at the scheduled time. The rotation time is read
     /// from here now, not the root daemon plist.
-    static let agentLabel = "com.tyler.aerial-rotate-agent"
+    static let agentLabel = "com.aerialrotate.agent"
     static var userAgentPlist: String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return home + "/Library/LaunchAgents/com.tyler.aerial-rotate-agent.plist"
+        return home + "/Library/LaunchAgents/com.aerialrotate.agent.plist"
     }
 
     /// User-owned wallpaper store holding the currently pinned asset id.
@@ -86,5 +86,24 @@ enum Config {
     static var thumbnailLog: String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return home + "/Library/Application Support/aerial-rotate/thumbnails.log"
+    }
+
+    /// Per-line `UPDATE:` log from `Updater`. Same shape as `thumbnailLog`;
+    /// `tail -F` here shows the silent pre-fetch happening between cold
+    /// launch and the banner appearing.
+    static var updateLog: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return home + "/Library/Application Support/aerial-rotate/updater.log"
+    }
+
+    /// Where the downloaded release .zip + (optional) daemon script land
+    /// before install, and where the detached helper script is copied to so
+    /// it survives the bundle swap that the helper itself performs.
+    static var updateStagingDir: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return home + "/Library/Application Support/aerial-rotate/update-staging"
+    }
+    static var updateHelperScriptPath: String {
+        updateStagingDir + "/install-update.sh"
     }
 }

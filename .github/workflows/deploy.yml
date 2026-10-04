@@ -1,0 +1,87 @@
+name: Build, tag, and release
+
+# Fires on every push to main. Reads CFBundleShortVersionString from
+# Info.plist; if `vX.Y` already exists as a tag, this is a no-op push (not a
+# version bump) and the job exits clean. Otherwise it builds the .app on
+# macos-latest (Command Line Tools are pre-installed; ad-hoc codesign just
+# works), zips the bundle, and cuts a release with both the .app.zip and the
+# daemon script as assets. The git tag is created implicitly by
+# `gh release create`.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Read version from Info.plist
+        id: version
+        run: |
+          V=$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - app/Sources/AerialRotateApp/Resources/Info.plist)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether tag already exists
+        id: check_tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "exists=1" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG already exists, nothing to release."
+          else
+            echo "exists=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the app
+        if: steps.check_tag.outputs.exists == '0'
+        run: |
+          cd app
+          ./build.sh
+
+      - name: Zip the bundle
+        if: steps.check_tag.outputs.exists == '0'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cd app
+          zip -ry "AerialRotate-v$VERSION.zip" AerialRotate.app
+
+      - name: Generate release notes
+        if: steps.check_tag.outputs.exists == '0'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          BODY=$(git log -1 --pretty=%B)
+          FOOTER=$(sed "s/{VERSION}/$VERSION/g" .github/release-template.md)
+          {
+            echo "$BODY"
+            echo ""
+            echo "$FOOTER"
+          } > /tmp/notes.md
+
+      - name: Create release
+        if: steps.check_tag.outputs.exists == '0'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$TAG" \
+            "app/AerialRotate-v$VERSION.zip" \
+            "aerial-rotate.sh" \
+            --title "$TAG" \
+            --notes-file /tmp/notes.md

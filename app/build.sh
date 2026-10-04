@@ -13,7 +13,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 APP="$HERE/AerialRotate.app"
 BIN_NAME="AerialRotate"
-BUNDLE_ID="com.tyler.aerial-rotate.app"
+BUNDLE_ID="com.aerialrotate.app"
 
 echo "== swift build (release, arm64) =="
 swift build -c release --arch arm64 --package-path "$HERE"
@@ -25,6 +25,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 install -m 755 "$BIN" "$APP/Contents/MacOS/$BIN_NAME"
 install -m 644 "$HERE/Sources/AerialRotateApp/Resources/Info.plist" "$APP/Contents/Info.plist"
+# Detached self-update helper script, looked up at runtime by Updater via
+# Bundle.main.url(forResource: "install-update", withExtension: "sh").
+install -m 755 "$HERE/Sources/AerialRotateApp/Resources/install-update.sh" "$APP/Contents/Resources/install-update.sh"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 echo "== ad-hoc codesign =="
