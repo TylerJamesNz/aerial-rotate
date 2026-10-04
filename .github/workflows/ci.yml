@@ -1,0 +1,44 @@
+name: CI build check
+
+# Build-only sanity check: compiles the menu-bar app on GitHub's macOS runner
+# WITHOUT cutting a release. Exists to answer whether the app still builds on a
+# current macOS runner after macOS 27 turned some SwiftUI property wrappers into
+# macros backed by the SwiftUIMacros plugin, which ships only with full Xcode
+# (not Command Line Tools). The toolchain-report step makes the runner's state
+# visible so a red build is diagnosable at a glance.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [feature/ci-build-check]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-build-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain report
+        run: |
+          echo "== macOS =="; sw_vers
+          echo "== active developer dir =="; xcode-select -p
+          echo "== swift =="; swift --version
+          echo "== selected Xcode =="; xcodebuild -version 2>/dev/null || echo "xcodebuild not available"
+          echo "== macro plugins on the toolchain =="
+          PLUGDIR="$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins"
+          ls -1 "$PLUGDIR" 2>/dev/null || echo "no host/plugins dir at $PLUGDIR"
+          echo "== any SwiftUIMacros plugin =="
+          find "$(xcode-select -p)/.." -iname "*SwiftUIMacros*" 2>/dev/null | head || true
+
+      - name: Build the app
+        run: |
+          cd app
+          ./build.sh
