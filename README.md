@@ -6,7 +6,7 @@ On the machine this was built for, the cache had grown to **6.4 GB**. After the 
 
 ## The problem
 
-macOS stores 4K aerials (350-750 MB each) under `/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/`. On "Shuffle all aerials" it keeps downloading and retaining more, never cleaning up, so the cache silently climbs into the multi-GB range.
+macOS stores 4K aerials (350-750 MB each) under `~/Library/Application Support/com.apple.wallpaper/aerials/videos/` (macOS 27 and later, per-user; before macOS 27 this was the system-wide, root-owned `/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/`, and macOS 27 moved the whole aerial tree, catalog and thumbnails included, into the user's own folder and retired `idleassetsd`). On "Shuffle all aerials" it keeps downloading and retaining more, never cleaning up, so the cache silently climbs into the multi-GB range.
 
 ## The solution
 
@@ -26,7 +26,7 @@ Pinning the `assetID` stops the *displayed* shuffle but not the prefetch. The wa
 
 ### How a run is triggered (two launchd jobs, no password)
 
-Rotation needs root (the asset dir is root-owned) but must fire without a password prompt. Timing is split from privilege across two jobs and one shared trigger file:
+Rotation runs as root but must fire without a password prompt. Timing is split from privilege across two jobs and one shared trigger file (the root split predates macOS 27's per-user move and is kept deliberately, see `docs/adr/0001-keep-root-split-on-macos27.md`):
 
 ```
 User LaunchAgent (com.aerialrotate.agent)  # holds the daily schedule, touches the trigger
@@ -86,7 +86,7 @@ State lives in `/var/log/aerial-rotate.{log,state,prune-counter}`.
 
 ## Notes / gotchas
 
-- The video dir is root-owned, so rotation runs as root from a LaunchDaemon; a user LaunchAgent owns the schedule and fires it via the WatchPaths trigger, which keeps the app's Refresh and reschedule password-free. `Index.plist` is user-owned; the script chowns it back after editing.
+- Rotation runs as root from a LaunchDaemon; a user LaunchAgent owns the schedule and fires it via the WatchPaths trigger, which keeps the app's Refresh and reschedule password-free. `Index.plist` is user-owned; the script chowns it back after editing. (Pre-macOS-27 the video dir was root-owned, which is why root was needed; macOS 27 made the whole aerial tree per-user, but the root split is kept deliberately, see `docs/adr/0001-keep-root-split-on-macos27.md`.)
 - Catalog fields used: `id`, `url-4K-SDR-240FPS`, `accessibilityLabel`, `includeInShuffle`.
-- Built and tested on macOS 15 (Sequoia), Apple Silicon. `Index.plist` key paths are version-specific; the script aborts with a clear message if Apple changes the schema.
+- Built and tested on macOS 15 (Sequoia) and macOS 27, Apple Silicon. The aerial asset tree is per-user from macOS 27 on (`~/Library/Application Support/com.apple.wallpaper/aerials/`); earlier macOS kept it system-wide under `com.apple.idleassetsd`. `Index.plist` key paths are version-specific; the script aborts with a clear message if Apple changes the schema.
 - `PRUNE_EVERY` in the script controls how often the dir is pruned to one video.

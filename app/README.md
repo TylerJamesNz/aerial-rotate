@@ -24,9 +24,12 @@ time both act instantly with no password prompt, then the window updates.
 - **Reads only, no daemon rewrite.** Everything the app shows comes from the
   same world-readable files the daemon writes: `/var/log/aerial-rotate.log`
   (progress + events), `/var/log/aerial-rotate.state` (the OS-prefetch diff),
-  the asset dir under `com.apple.idleassetsd` (sizes + catalog), `entries.json`
-  (human names), the user wallpaper `Index.plist` (current id), and the user
-  LaunchAgent plist (the schedule). No Full Disk Access, no root for reads.
+  the per-user aerials tree under `com.apple.wallpaper/aerials` (video sizes,
+  `manifest/entries.json` for names, and `thumbnails/<id>.png` for the grid),
+  the user wallpaper `Index.plist` (current id), and the user LaunchAgent plist
+  (the schedule). macOS 27 moved these off the old system-wide
+  `com.apple.idleassetsd` tree into the user's own, user-owned. No Full Disk
+  Access, no root for reads.
 - **One outbound network read: live weather for the dial.** `WeatherStore`
   polls every 20 minutes for approximate location (machine public IP via
   `ipapi.co`, so no CoreLocation prompt) then current conditions (Open-Meteo,

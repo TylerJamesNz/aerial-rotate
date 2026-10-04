@@ -10,7 +10,11 @@ REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_USER="${SUDO_USER:-$(stat -f%Su /dev/console)}"
 USER_UID=$(id -u "$TARGET_USER")
 USER_HOME=$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory | awk '{print $2}')
-VIDEO_DIR="/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS"
+# macOS 27 moved the aerial videos into the user's own tree (was the system-wide
+# com.apple.idleassetsd/Customer/4KSDR240FPS, root-owned). OLD_VIDEO_DIR is the
+# dead system location, cleaned up once below.
+VIDEO_DIR="$USER_HOME/Library/Application Support/com.apple.wallpaper/aerials/videos"
+OLD_VIDEO_DIR="/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS"
 SENTINEL="/usr/local/var/aerial-rotate/trigger"   # WatchPaths trigger shared by the user agent + the app
 AGENT_PLIST="$USER_HOME/Library/LaunchAgents/com.aerialrotate.agent.plist"
 
@@ -36,6 +40,19 @@ if [ ! -x /usr/local/bin/dialog ]; then
   rm -f /tmp/dialog.pkg
 else
   echo "  already installed"
+fi
+
+echo "== one-time cleanup of the dead macOS <27 system aerial cache =="
+# macOS 27 abandoned /Library/Application Support/com.apple.idleassetsd/Customer,
+# but the old root-owned .mov's are left orphaned there, wasting GBs. Remove them
+# once (we have root here). Best-effort: never abort the install on failure.
+if [ -d "$OLD_VIDEO_DIR" ]; then
+  old_bytes=$(find "$OLD_VIDEO_DIR" -maxdepth 1 -name '*.mov' -exec stat -f '%z' {} + 2>/dev/null | awk '{s+=$1} END{print s+0}')
+  chflags nouchg "$OLD_VIDEO_DIR" 2>/dev/null || true
+  rm -f "$OLD_VIDEO_DIR"/*.mov 2>/dev/null || true
+  echo "  removed orphaned aerials from $OLD_VIDEO_DIR (freed ~$(( old_bytes / 1024 / 1024 )) MB)"
+else
+  echo "  no old system cache present — nothing to clean"
 fi
 
 echo "== installing script + daemon =="
