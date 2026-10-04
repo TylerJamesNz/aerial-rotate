@@ -6,7 +6,8 @@
 #
 # Each run:
 #   1. unlocks the video dir (chflags nouchg) — it sits user-immutable between
-#      runs so the prefetcher (idleassetsd, runs as _assetsd) can't add aerials
+#      runs so the prefetcher (WallpaperAerialsExtension on macOS 27, was
+#      idleassetsd/_assetsd) can't add aerials
 #   2. snapshots the dir and reports which .mov's APPEARED since last run
 #      (diagnostic: proves whether the lock held)
 #   3. picks a random aerial from the catalog (excludes the current one)
@@ -24,19 +25,26 @@
 set -uo pipefail
 
 # ---- config -----------------------------------------------------------------
-# TARGET_USER / USER_HOME / USER_UID / STORE / FAVOURITES are resolved at
-# runtime in resolve_target_user() so the same install survives any operator
-# (no install-time bake of a username). See `## 1. Adaptive device-state pickup`
-# in the design plan for the resolution chain.
-ASSET_ROOT="/Library/Application Support/com.apple.idleassetsd/Customer"
-ENTRIES="$ASSET_ROOT/entries.json"
-VIDEO_DIR="$ASSET_ROOT/4KSDR240FPS"
+# TARGET_USER / USER_HOME / USER_UID / ASSET_ROOT / ENTRIES / VIDEO_DIR / STORE /
+# FAVOURITES are resolved at runtime in resolve_target_user() so the same install
+# survives any operator (no install-time bake of a username). See `## 1. Adaptive
+# device-state pickup` in the design plan for the resolution chain.
+#
+# macOS 27 moved the whole aerial asset model out of the old system-wide,
+# root-owned /Library/Application Support/com.apple.idleassetsd/Customer tree
+# (managed by idleassetsd, which no longer exists) into the logged-in user's own
+# ~/Library/Application Support/com.apple.wallpaper/aerials tree, user-owned.
+# So ASSET_ROOT is now per-user and resolved after USER_HOME is known, alongside
+# STORE, rather than a static system path.
 LOG="/var/log/aerial-rotate.log"
 STATE="/var/log/aerial-rotate.state"           # end-of-run snapshot of the video dir
 
 TARGET_USER=""
 USER_HOME=""
 USER_UID=""
+ASSET_ROOT=""
+ENTRIES=""
+VIDEO_DIR=""
 STORE=""
 FAVOURITES=""
 
@@ -118,8 +126,14 @@ resolve_target_user() {
   fi
   preflight_line OK user.uid "target_user=$TARGET_USER uid=$USER_UID"
 
+  # macOS 27 per-user aerial tree: catalog, videos, and thumbnails all live here
+  # now, user-owned (was the system-wide com.apple.idleassetsd/Customer tree).
+  ASSET_ROOT="$USER_HOME/Library/Application Support/com.apple.wallpaper/aerials"
+  ENTRIES="$ASSET_ROOT/manifest/entries.json"
+  VIDEO_DIR="$ASSET_ROOT/videos"
   STORE="$USER_HOME/Library/Application Support/com.apple.wallpaper/Store/Index.plist"
   FAVOURITES="$USER_HOME/Library/Application Support/aerial-rotate/shuffle-favourites.json"
+  preflight_line OK asset_root "asset_root=$ASSET_ROOT"
   preflight_line OK store.path "store=$STORE"
 }
 
@@ -252,9 +266,16 @@ snapshot_dir() {
 }
 
 # ---- cache lock (chflags) ---------------------------------------------------
-# idleassetsd runs as _assetsd, not root, so a root-set user-immutable flag on
-# the video dir blocks it from adding new .mov's — the durable fix the Shuffle
-# removal didn't deliver. Both helpers are idempotent and never fatal.
+# A root-set user-immutable flag on the video dir blocks the prefetcher from
+# adding new .mov's — the durable fix the Shuffle removal didn't deliver. Both
+# helpers are idempotent and never fatal.
+#
+# macOS 27 caveat: the video dir is now user-owned and the prefetcher
+# (WallpaperAerialsExtension) runs as that user, so the owner could in principle
+# clear uchg itself — the lock is no longer structurally guaranteed the way it
+# was when the dir was root-owned and the prefetcher ran as _assetsd. In practice
+# the extension is not expected to touch flags it didn't set; the APPEARED-since-
+# last-run diagnostic below is what proves whether the lock still holds.
 lock_cache()   { chflags uchg   "$VIDEO_DIR" 2>/dev/null && log "locked cache dir (uchg)"     || log "WARN: could not lock $VIDEO_DIR"; }
 unlock_cache() { chflags nouchg "$VIDEO_DIR" 2>/dev/null && log "unlocked cache dir (nouchg)" || log "WARN: could not unlock $VIDEO_DIR"; }
 
@@ -413,7 +434,7 @@ fi
 DOWNLOAD_ACTUAL=$(stat -f%z "$TMP" 2>/dev/null || echo 0)
 log "DOWNLOAD: end elapsed_s=$(( $(date +%s) - DOWNLOAD_START_TS )) retries=$DOWNLOAD_RETRIES actual_bytes=$DOWNLOAD_ACTUAL ok=true"
 notify "Downloaded — applying" "$NEW_NAME (100%)"
-mv -f "$TMP" "$DEST"; chown root:wheel "$DEST"; chmod 644 "$DEST"
+mv -f "$TMP" "$DEST"; chown "$TARGET_USER:staff" "$DEST"; chmod 644 "$DEST"
 log "saved $DEST"
 
 # ---- pin the wallpaper to the new id + kill the Shuffle --------------------
@@ -466,8 +487,8 @@ log "EXEC: killall WallpaperAgent exit=$?"
 log "pinned wallpaper to $NEW_NAME"
 
 # ---- clean anything the OS snuck in, then relock ---------------------------
-# The dir was writable this run, so idleassetsd may have slipped extra aerials
-# in. Delete every .mov except the one we just pinned; the EXIT trap relocks.
+# The dir was writable this run, so the prefetcher may have slipped extra
+# aerials in. Delete every .mov except the one we just pinned; the EXIT trap relocks.
 snuck=0; freed=0
 while IFS= read -r f; do
   [ "$f" = "$DEST" ] && continue

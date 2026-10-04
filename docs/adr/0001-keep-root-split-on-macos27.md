@@ -1,0 +1,7 @@
+# ADR 1: Keep the root-daemon + user-agent split on macOS 27, despite nothing needing root anymore
+
+**Date:** 2026-10-05 · **Status:** Accepted
+
+The whole two-job design (a root `LaunchDaemon` that does the swap, a user `LaunchAgent` + `WatchPaths` trigger that fires it without a password) existed for one reason: pre-macOS-27, the aerial video dir was system-wide and root-owned, so the swap needed root. macOS 27 moved the entire aerial tree (catalog, videos, thumbnails) into the user's own `~/Library/Application Support/com.apple.wallpaper/aerials/`, all user-owned and user-writable, and retired `idleassetsd`. A plain user job could now do the whole swap, so the root split buys nothing. We kept it anyway and only repointed the paths, choosing a minimal, low-regression diff over collapsing to a single user agent. The collapse (drop the daemon, the trigger, and the privileged installer step) stays on the table as a follow-up; this ADR records that the root split surviving here is a deliberate scope choice, not an oversight.
+
+**Consequences:** the installer still needs `sudo` and still installs a root daemon that writes into the user's home, which is more moving parts than the platform now requires. The anti-prefetch `chflags uchg` lock is also no longer structurally guaranteed (the video dir's owner, which is now also the user the prefetcher runs as, can clear the flag); its continued effectiveness is verified by the "APPEARED since last run" diagnostic rather than by ownership.
